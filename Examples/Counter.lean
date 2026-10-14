@@ -1,9 +1,9 @@
-import UniversalViz
+import UVL
 
 /-! Interactive example: a counter with a history chart (Elm architecture). -/
 
 namespace Examples.Counter
-open UViz UI
+open UVL UI
 
 inductive Msg where
   | inc

@@ -8,7 +8,7 @@ the frame, so edge tiles are clipped).
 -/
 
 namespace Tests.Tile
-open UViz
+open UVL
 
 structure Scene where
   name : String

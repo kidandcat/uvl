@@ -20,7 +20,7 @@ baremetal/
 
 ## How it works
 
-1. **Lean side.** `UniversalViz/BareMetal/Shell.lean` wraps an `App` together
+1. **Lean side.** `UVL/BareMetal/Shell.lean` wraps an `App` together
    with its model, the current scene split into tiles (`TileList`) and the
    screen configuration. `Examples/BareMetalCounter.lean` exports the C API with
    `@[export]`: `uvl_init`, `uvl_event`, `uvl_needs_redraw`, `uvl_begin_frame`,

@@ -14,7 +14,7 @@ Test driver (`lake test`).
 * Codec checks: PNG round-trip through our encoder and the test decoder.
 -/
 
-open UViz UViz.Layout
+open UVL UVL.Layout
 
 structure Golden where
   name : String

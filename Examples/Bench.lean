@@ -1,6 +1,6 @@
 import Examples.Counter
 import Examples.Scenes
-open UViz
+open UVL
 
 def main (args : List String) : IO Unit := do
   let n := (args.head? >>= String.toNat?).getD 20

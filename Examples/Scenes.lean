@@ -1,9 +1,9 @@
-import UniversalViz
+import UVL
 
 /-! Example scenes shared by the demo executable and the golden tests. -/
 
 namespace Examples
-open UViz
+open UVL
 
 /-- Milestone 1 showcase: SDF shapes, gradients, shadows, Bézier paths and text. -/
 def primitives : Array RenderOp := #[

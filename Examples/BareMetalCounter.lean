@@ -1,5 +1,5 @@
 import Examples.Counter
-import UniversalViz.BareMetal.Shell
+import UVL.BareMetal.Shell
 
 /-!
 The counter app exported for microcontrollers: the same `Examples.Counter.app`
@@ -9,7 +9,7 @@ compiles together with `baremetal/rt/uvl_rt.c` (no `libleanrt`).
 -/
 
 namespace Examples.BareMetalCounter
-open UViz BareMetal
+open UVL BareMetal
 
 abbrev S := Shell Counter.Model Counter.Msg
 

@@ -13,9 +13,9 @@ jobs:
         with:
           test: true
       - name: Render demo images
-        run: lake exe uviz-demo
+        run: lake exe uvl-demo
       - name: Benchmark
-        run: lake exe uviz-bench
+        run: lake exe uvl-bench
       - uses: actions/upload-artifact@v4
         with:
           name: demo-images

@@ -1,4 +1,4 @@
-import UniversalViz
+import UVL
 
 /-!
 # SDL3 desktop shell
@@ -8,7 +8,7 @@ opens a window, delivers raw events and presents an RGBA buffer. Everything
 else (state, layout, hit testing, rasterization) is the pure Lean runtime.
 -/
 
-namespace UViz.SDL
+namespace UVL.SDL
 
 @[extern "uvl_sdl_open"] opaque openWindow (title : @& String) (w h : UInt32) : IO Unit
 /-- Pending events, packed 5 floats each: `[kind, a, b, c, d]`. -/
@@ -106,4 +106,4 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
     loop rt now frames
   loop (Runtime.start app w h) (← ticksMs) 0
 
-end UViz.SDL
+end UVL.SDL

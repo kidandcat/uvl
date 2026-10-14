@@ -1,4 +1,4 @@
-import UniversalViz
+import UVL
 
 /-!
 Minimal PNG reader used by the golden tests: RGBA8, non-interlaced, zlib
@@ -63,11 +63,11 @@ partial def inflate (d : ByteArray) : Except String ByteArray := do
         else if sym == 256 then done := true
         else
           let lc := sym - 257
-          let (e, r1) := r.bits UViz.Deflate.lenExtra[lc]!; r := r1
-          let len := UViz.Deflate.lenBase[lc]! + e
+          let (e, r1) := r.bits UVL.Deflate.lenExtra[lc]!; r := r1
+          let len := UVL.Deflate.lenBase[lc]! + e
           let (dc, r1) := r.code 5 0; r := r1
-          let (e, r1) := r.bits UViz.Deflate.distExtra[dc]!; r := r1
-          let dist := UViz.Deflate.distBase[dc]! + e
+          let (e, r1) := r.bits UVL.Deflate.distExtra[dc]!; r := r1
+          let dist := UVL.Deflate.distBase[dc]! + e
           for _ in [0:len] do
             out := out.push out[out.size - dist]!
     else throw "unsupported deflate block type"
@@ -87,7 +87,7 @@ def decode (png : ByteArray) : Except String (Nat × Nat × ByteArray) := do
     let len := be32 png i
     let ty := String.fromUTF8! (png.extract (i + 4) (i + 8))
     let body := png.extract (i + 8) (i + 8 + len)
-    if UViz.Image.crc32 (png.extract (i + 4) (i + 8 + len)) != (be32 png (i + 8 + len)).toUInt32 then
+    if UVL.Image.crc32 (png.extract (i + 4) (i + 8 + len)) != (be32 png (i + 8 + len)).toUInt32 then
       throw s!"bad CRC in {ty}"
     if ty == "IHDR" then
       w := be32 body 0; h := be32 body 4

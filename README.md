@@ -20,10 +20,10 @@ plataforma anfitriona solo tiene que entregar un *framebuffer* y un flujo de eve
 
 ```bash
 lake build              # la librería
-lake exe uviz-demo      # escribe out/primitives.png, out/hello.png, out/dashboard.png
+lake exe uvl-demo      # escribe out/primitives.png, out/hello.png, out/dashboard.png
 lake test               # tests golden + layout + códecs
 lake test -- --update   # regenera las imágenes golden
-lake exe uviz-bench     # tiempo por frame del rasterizador
+lake exe uvl-bench     # tiempo por frame del rasterizador
 lake exe uvl-counter    # app de escritorio (requiere SDL3)
 ```
 
@@ -32,8 +32,8 @@ Requiere Lean `v4.35.0` (fijado en `lean-toolchain`).
 ### API de funciones
 
 ```lean
-import UniversalViz
-open UViz UI
+import UVL
+open UVL UI
 
 def hello : UI.Widget Unit :=
   center <| card <| col [ row [ text "Hola", button "Click" ] ]
@@ -48,7 +48,7 @@ def main : IO Unit :=
 
 Sintaxis por indentación; cada línea es `widget args*` y `:` abre un bloque de hijos
 (o `;` en la misma línea). Es azúcar puro sobre la API de funciones: `nombre` se resuelve a
-`UViz.UI.nombre`, así que añadir un widget nuevo es definir una función.
+`UVL.UI.nombre`, así que añadir un widget nuevo es definir una función.
 
 ```lean
 def dashboard : UI.Widget Unit := ui! pad 20:
@@ -90,7 +90,7 @@ def app : App Model Msg where
 
 ![counter](Tests/golden/counter.png)
 
-* **Escritorio:** `UViz.SDL.run app` abre una ventana con SDL3. El shell en C
+* **Escritorio:** `UVL.SDL.run app` abre una ventana con SDL3. El shell en C
   ([native/sdl_shell.c](native/sdl_shell.c)) solo traduce eventos y copia el buffer RGBA a
   una textura; no hay lógica de UI en C. Solo se redibuja cuando algo cambia, así que una UI
   en reposo no gasta CPU.
@@ -104,14 +104,14 @@ habituales. Sin pantalla se puede probar con
 
 ### Rendimiento
 
-CPU, un núcleo, 800×600 (`lake exe uviz-bench`): contador ~7 ms/frame, dashboard completo
+CPU, un núcleo, 800×600 (`lake exe uvl-bench`): contador ~7 ms/frame, dashboard completo
 ~35 ms/frame. Dos claves:
 
 * El rasterizador aprovecha que un SDF es 1-Lipschitz: con una evaluación salta tramos
   enteros fuera de la forma o rellena tramos enteros dentro, y solo evalúa píxel a píxel el
   borde antialiasado.
 * Los literales `Float` se elaboran a `Float.ofBits` con el patrón de bits calculado en
-  compilación ([Core/FloatLit.lean](UniversalViz/Core/FloatLit.lean)); Lean los compilaba
+  compilación ([Core/FloatLit.lean](UVL/Core/FloatLit.lean)); Lean los compilaba
   como `Float.ofScientific` con aritmética de precisión arbitraria en cada evaluación.
 
 ### Escena de bajo nivel (`RenderOp`)
@@ -131,7 +131,7 @@ def scene : Array RenderOp := #[
 ## Arquitectura
 
 ```
-UniversalViz/
+UVL/
   Core/       Color, Vec2/Rect/Affine, literales Float rápidos
   Render/     FrameBuffer (verificado), SDF, Paint, Path, Font, RenderOp, Raster
   Output/     Deflate/zlib y PNG/PPM en Lean puro

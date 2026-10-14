@@ -1,12 +1,12 @@
 import Lake
 open Lake DSL
 
-package «universal-viz» where
+package uvl where
   leanOptions := #[⟨`autoImplicit, false⟩, ⟨`relaxedAutoImplicit, false⟩]
   moreLeancArgs := #["-O3"]
 
 @[default_target]
-lean_lib UniversalViz
+lean_lib UVL
 
 lean_lib Tests where
   globs := #[.one `Tests.PngDecode, .one `Tests.Tile]
@@ -14,7 +14,7 @@ lean_lib Tests where
 lean_lib Examples where
   globs := #[.one `Examples.Scenes, .one `Examples.Counter, .one `Examples.BareMetalCounter]
 
-lean_exe «uviz-demo» where
+lean_exe «uvl-demo» where
   root := `Examples.Demo
 
 /-- Reference frames for the bare-metal host test (`baremetal/tools/host_test.sh`). -/
@@ -22,7 +22,7 @@ lean_exe «uvl-baremetal-ref» where
   root := `Examples.BareMetalRef
 
 @[test_driver]
-lean_exe «uviz-tests» where
+lean_exe «uvl-tests» where
   root := `Tests.Main
 
 /-! ## Desktop shell (SDL3)
@@ -72,5 +72,5 @@ lean_exe «uvl-counter» where
   moreLinkObjs := #[sdl_shell.o, sdl3_lib]
   moreLinkArgs := sdlLinkArgs
 
-lean_exe «uviz-bench» where
+lean_exe «uvl-bench» where
   root := `Examples.Bench

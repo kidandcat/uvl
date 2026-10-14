@@ -1,6 +1,6 @@
 import Examples.Scenes
 
-open UViz
+open UVL
 
 def main : IO Unit := do
   IO.FS.createDirAll "out"
