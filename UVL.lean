@@ -11,6 +11,7 @@ import UVL.Render.Font
 import UVL.Render.RenderOp
 import UVL.Render.Raster
 import UVL.Render.Tile
+import UVL.Render.Damage
 import UVL.Output.Deflate
 import UVL.Output.Image
 import UVL.Layout.Constraints

@@ -134,7 +134,15 @@ The counter is a 1.8 MB `.wasm`. Any app works: export a constructor with
 
 `lake exe uvl-bench` measures CPU time per full frame, one core, 800×600: about 55 ms for the
 counter and 90 ms for the dashboard natively; WebAssembly in V8 is about 1.3× slower. Frames
-are only rendered when something changed. What matters most:
+are only rendered when something changed, and then only partially. What matters most:
+
+* **Partial redraw** ([Render/Damage.lean](UVL/Render/Damage.lean)): `Runtime.present`
+  diffs the new scene against the last presented one (structurally, through groups,
+  transforms and clips), repaints only the damaged windows and copies them into the previous
+  frame, which is updated in place. Shells upload only those windows (`writeTexture` with an
+  origin in WebGPU, dirty rectangles in Canvas 2D). The result is bit-identical to a full
+  render (checked by the tests). Hovering a counter button repaints about 6 000 of 480 000
+  pixels: **1.7 ms** instead of 56 ms.
 
 * The rasterizer exploits that an SDF is 1-Lipschitz: one evaluation skips whole runs of
   pixels outside the shape or fills whole runs inside it, and only the anti-aliased edge is
@@ -210,8 +218,8 @@ Tests/        golden images, test PNG decoder, test driver
 
 ## Next steps
 
-1. Partial redraw (only the regions that changed, e.g. a hovered button) and a faster
-   per-pixel blend: full frames are still too slow for 60 FPS animation at large sizes.
+1. GPU rasterization of the render ops (tessellation into vertex buffers, SDFs evaluated in
+   WGSL shaders generated from a typed Lean DSL): full frames, as in animations or resizes,
+   are still too slow for 60 FPS on the CPU.
 2. Line-wrapping text, a TrueType parser and an MSDF atlas.
 3. Stateful widgets: text field, scrolling, sliders; animations with `tick`.
-4. GPU rasterization of the render ops (today the GPU only presents the CPU frame).

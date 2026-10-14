@@ -65,14 +65,25 @@ function diff(a, b) {
     console.log(`changed bytes after click: ${changed}`);
     if (changed === 0) throw new Error('click did not change the frame');
 
+    // hovering another button must only repaint (and upload) a small window
+    const other = await page.evaluate(() => window.uvl.targetCenter(1));
+    const f2 = await page.evaluate(() => window.uvl.state.frames);
+    await page.mouse.move(box.x + other[0], box.y + other[1]);
+    await page.waitForFunction((f) => window.uvl.state.frames > f, f2, { timeout: 10000 });
+    await page.waitForTimeout(200);
+    const hover = await page.evaluate(() => [window.uvl.state.damaged, window.uvl.canvas.width * window.uvl.canvas.height]);
+    console.log(`hover repainted ${hover[0]} of ${hover[1]} px`);
+    if (!(hover[0] > 0 && hover[0] * 10 < hover[1])) throw new Error('hover was not a partial redraw');
+    const hovered = await page.evaluate(() => Array.from(window.uvl.snapshot()));
+
     if (backend === 'webgpu') {
       // headless Chromium does not composite WebGPU canvases into screenshots,
       // so compare what the GPU drew with the frame Lean produced instead
       const gpu = await page.evaluate(async () => Array.from(await window.uvl.gpuReadback()));
       let maxErr = 0;
-      for (let i = 0; i < gpu.length; i++) if (i % 4 !== 3) maxErr = Math.max(maxErr, Math.abs(gpu[i] - after[i]));
+      for (let i = 0; i < gpu.length; i++) if (i % 4 !== 3) maxErr = Math.max(maxErr, Math.abs(gpu[i] - hovered[i]));
       console.log(`WebGPU readback vs Lean frame: max channel error ${maxErr}`);
-      if (gpu.length !== after.length || maxErr > 2) throw new Error('WebGPU output differs from the frame');
+      if (gpu.length !== hovered.length || maxErr > 2) throw new Error('WebGPU output differs from the frame');
     }
     await page.locator('#app').screenshot({ path: shot });
     console.log(`screenshot: ${shot}`);

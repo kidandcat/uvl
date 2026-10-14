@@ -69,9 +69,11 @@ class WebGPUPresenter {
     this.texture = null;
   }
 
-  present(pixels, w, h, readback = null) {
+  /** Upload `pixels` (only the `damage` windows, when given) and draw. */
+  present(pixels, w, h, damage = null, readback = null) {
     const { device } = this;
     if (!this.texture || this.texture.width !== w || this.texture.height !== h) {
+      damage = null;
       this.texture?.destroy();
       this.texture = device.createTexture({
         size: [w, h],
@@ -83,7 +85,10 @@ class WebGPUPresenter {
         entries: [{ binding: 0, resource: this.texture.createView() }],
       });
     }
-    device.queue.writeTexture({ texture: this.texture }, pixels, { bytesPerRow: w * 4 }, [w, h]);
+    for (const [x, y, dw, dh] of damage ?? [[0, 0, w, h]]) {
+      device.queue.writeTexture({ texture: this.texture, origin: [x, y] }, pixels,
+        { offset: (y * w + x) * 4, bytesPerRow: w * 4 }, [dw, dh]);
+    }
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
@@ -103,13 +108,14 @@ class WebGPUPresenter {
     device.queue.submit([encoder.finish()]);
   }
 
-  /** Present `pixels` and read back the canvas texture as RGBA bytes. */
+  /** Redraw the current texture (no upload, so this checks the accumulated
+   * partial uploads) and read back the canvas texture as RGBA bytes. */
   async readback(pixels, w, h) {
     const stride = Math.ceil(w * 4 / 256) * 256;
     const buffer = this.device.createBuffer({
       size: stride * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
-    this.present(pixels, w, h, { buffer, stride });
+    this.present(pixels, w, h, [], { buffer, stride });
     await buffer.mapAsync(GPUMapMode.READ);
     const src = new Uint8Array(buffer.getMappedRange());
     const out = new Uint8Array(w * h * 4);
@@ -135,8 +141,10 @@ class Canvas2DPresenter {
     this.ctx = canvas.getContext('2d');
   }
 
-  present(pixels, w, h) {
-    this.ctx.putImageData(new ImageData(new Uint8ClampedArray(pixels), w, h), 0, 0);
+  present(pixels, w, h, damage = null) {
+    // a view on the wasm heap: no copy of the whole frame
+    const img = new ImageData(new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, w * h * 4), w, h);
+    for (const [x, y, dw, dh] of damage ?? [[0, 0, w, h]]) this.ctx.putImageData(img, 0, 0, x, y, dw, dh);
   }
 }
 
@@ -153,7 +161,14 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
 
   const mod = await createModule();
   const framePixels = () => mod.HEAPU8.subarray(mod._uvl_frame_ptr(), mod._uvl_frame_ptr() + w * h * 4);
-  const state = { backend: 'none', frames: 0, quit: false };
+  // windows of the last frame that changed, as [x, y, w, h] (see web_shell.c)
+  const damageWindows = () => {
+    const p = mod._uvl_damage_ptr() / 8;
+    return Array.from({ length: mod._uvl_damage_count() }, (_, i) =>
+      Array.from(mod.HEAPF64.subarray(p + 4 * i, p + 4 * i + 4)));
+  };
+  // `damaged`: pixels uploaded for the last frame
+  const state = { backend: 'none', frames: 0, damaged: 0, quit: false };
 
   // A lost WebGPU device (driver reset, or software adapters in some headless
   // browsers) falls back to Canvas 2D. A canvas that has a WebGPU context can
@@ -230,8 +245,11 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     if (r === 1) {
       w = mod._uvl_width();
       h = mod._uvl_height();
+      let damage = null;
       if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-      presenter.present(framePixels(), w, h);
+      else if (state.frames) damage = damageWindows();
+      presenter.present(framePixels(), w, h, damage);
+      state.damaged = damage ? damage.reduce((a, [, , dw, dh]) => a + dw * dh, 0) : w * h;
       state.frames++;
     }
     requestAnimationFrame(frame);

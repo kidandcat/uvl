@@ -1,6 +1,7 @@
 import UVL.App.Event
 import UVL.UI.Basic
 import UVL.Output.Image
+import UVL.Render.Damage
 
 /-!
 # Elm-style application runtime
@@ -44,6 +45,10 @@ structure Runtime (Model Msg : Type) where
   /-- A new frame must be presented. -/
   dirty : Bool := true
   quit : Bool := false
+  /-- The last presented frame, reused by `present` for partial redraws. -/
+  presented : Option Frame := none
+  /-- Windows that changed in the last `present` (what a shell must upload). -/
+  damage : Array Window := #[]
 
 namespace Runtime
 
@@ -116,6 +121,26 @@ def pointerState (rt : Runtime Model Msg) : PointerState :=
 /-- Render the current frame as RGBA8 bytes (`width * height * 4`). -/
 def frame (rt : Runtime Model Msg) : ByteArray :=
   (Raster.render rt.width rt.height (rt.tree.2.toOps 0 0 rt.pointerState) rt.app.background).data
+
+/-- Render the current frame incrementally: only the windows whose content
+changed since the last `present` are rasterized (see `Render/Damage.lean`).
+Clears `dirty`; the pixels are then `pixels` and the changed windows `damage`. -/
+def present (rt : Runtime Model Msg) : Runtime Model Msg :=
+  let ops := rt.tree.2.toOps 0 0 rt.pointerState
+  let w := rt.width; let h := rt.height; let bg := rt.app.background
+  -- take the cached frame out first so its pixels are updated in place
+  let prev := rt.presented
+  let rt := { rt with presented := none }
+  let (f, damage) := match prev with
+    | some f => f.update w h ops bg
+    | none => (Frame.full w h ops bg, #[⟨0, 0, w, h⟩])
+  { rt with presented := some f, damage, dirty := false }
+
+/-- RGBA8 pixels of the last `present` (empty before the first one). -/
+def pixels (rt : Runtime Model Msg) : ByteArray :=
+  match rt.presented with
+  | some f => f.data
+  | none => .empty
 
 def framePNG (rt : Runtime Model Msg) : ByteArray :=
   Image.toPNG (Raster.render rt.width rt.height (rt.tree.2.toOps 0 0 rt.pointerState)

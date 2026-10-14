@@ -14,7 +14,7 @@ structure Color where
   g : Float
   b : Float
   a : Float := 1.0
-deriving Inhabited, Repr
+deriving Inhabited, Repr, BEq
 
 namespace Color
 

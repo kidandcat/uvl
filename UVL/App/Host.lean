@@ -123,6 +123,21 @@ def height (r : AnyRuntime) : UInt32 := r.rt.height.toUInt32
 @[export uvl_host_frame]
 def frame (r : AnyRuntime) : ByteArray := r.rt.frame
 
+/-- Render the current frame incrementally and clear `dirty` (see
+`Runtime.present`). Pass the only reference so the frame is updated in place. -/
+@[export uvl_host_present]
+def present (r : AnyRuntime) : AnyRuntime := ⟨r.rt.present⟩
+
+/-- RGBA8 pixels of the last `present`. -/
+@[export uvl_host_pixels]
+def pixels (r : AnyRuntime) : ByteArray := r.rt.pixels
+
+/-- Windows repainted by the last `present`, as `x, y, w, h` quadruples. -/
+@[export uvl_host_damage]
+def damage (r : AnyRuntime) : FloatArray :=
+  r.rt.damage.foldl (init := .empty) fun a d =>
+    a.push d.x.toF |>.push d.y.toF |>.push d.w.toF |>.push d.h.toF
+
 @[export uvl_host_mark_clean]
 def markClean (r : AnyRuntime) : AnyRuntime := ⟨{ r.rt with dirty := false }⟩
 

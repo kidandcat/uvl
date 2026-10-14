@@ -25,7 +25,7 @@ structure Corners where
   tr : Float := 0
   br : Float := 0
   bl : Float := 0
-deriving Inhabited, Repr
+deriving Inhabited, Repr, BEq
 
 def Corners.all (r : Float) : Corners := ⟨r, r, r, r⟩
 

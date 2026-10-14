@@ -12,7 +12,7 @@ namespace UVL
 structure Vec2 where
   x : Float
   y : Float
-deriving Inhabited, Repr
+deriving Inhabited, Repr, BEq
 
 namespace Vec2
 instance : Add Vec2 := ⟨fun a b => ⟨a.x + b.x, a.y + b.y⟩⟩
@@ -36,7 +36,7 @@ structure Rect where
   y : Float
   w : Float
   h : Float
-deriving Inhabited, Repr
+deriving Inhabited, Repr, BEq
 
 namespace Rect
 def center (r : Rect) : Vec2 := ⟨r.x + r.w / 2, r.y + r.h / 2⟩
@@ -62,7 +62,7 @@ structure Affine where
   d : Float := 1
   e : Float := 0
   f : Float := 0
-deriving Inhabited, Repr
+deriving Inhabited, Repr, BEq
 
 namespace Affine
 def identity : Affine := {}

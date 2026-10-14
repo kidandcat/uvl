@@ -47,8 +47,8 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
     if rt.quit then finish rt; return
     let mut frames := frames
     if rt.dirty then
-      present rt.frame rt.width.toUInt32 rt.height.toUInt32
-      rt := { rt with dirty := false }
+      rt := rt.present
+      present rt.pixels rt.width.toUInt32 rt.height.toUInt32
       frames := frames + 1
       if frames == 1 then
         if let some i := clickTarget then

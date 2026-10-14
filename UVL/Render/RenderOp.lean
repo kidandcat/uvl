@@ -25,7 +25,7 @@ inductive Shape where
   /-- A line segment; only meaningful when stroked. -/
   | line (a b : Vec2)
   | path (p : Path) (rule : FillRule := .nonZero)
-deriving Inhabited
+deriving Inhabited, BEq
 
 inductive RenderOp where
   | fill (s : Shape) (p : Paint)
@@ -37,7 +37,7 @@ inductive RenderOp where
   | transform (m : Affine) (ops : Array RenderOp)
   | clip (r : Rect) (ops : Array RenderOp)
   | group (ops : Array RenderOp)
-deriving Inhabited
+deriving Inhabited, BEq
 
 namespace RenderOp
 

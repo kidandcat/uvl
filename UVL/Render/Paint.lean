@@ -16,7 +16,7 @@ inductive Paint where
   | solid (c : Color)
   | linear (p0 p1 : Vec2) (stops : Array Stop)
   | radial (center : Vec2) (radius : Float) (stops : Array Stop)
-deriving Inhabited
+deriving Inhabited, BEq
 
 instance : Coe Color Paint := ⟨Paint.solid⟩
 

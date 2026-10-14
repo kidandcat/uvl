@@ -15,11 +15,11 @@ inductive PathCmd where
   | quadTo (c p : Vec2)
   | cubicTo (c1 c2 p : Vec2)
   | close
-deriving Inhabited, Repr
+deriving Inhabited, Repr, BEq
 
 structure Path where
   cmds : Array PathCmd := #[]
-deriving Inhabited, Repr
+deriving Inhabited, Repr, BEq
 
 namespace Path
 

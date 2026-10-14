@@ -5,7 +5,9 @@
  * the WebGPU presenter. Each frame it packs pending input into a Float64Array
  * (5 doubles per event, same encoding as the SDL shell, see
  * UVL/App/Host.lean) and calls `uvl_step`. When that returns 1 there
- * is a new RGBA frame at `uvl_frame_ptr()`.
+ * is a new RGBA frame at `uvl_frame_ptr()`, of which only the
+ * `uvl_damage_count()` windows at `uvl_damage_ptr()` (x, y, w, h doubles)
+ * changed since the previous one.
  *
  * Everything else, state, layout, hit testing and rasterization, is Lean.
  */
@@ -26,15 +28,18 @@ extern uint8_t uvl_host_dirty(lean_object *r);
 extern uint8_t uvl_host_quit(lean_object *r);
 extern uint32_t uvl_host_width(lean_object *r);
 extern uint32_t uvl_host_height(lean_object *r);
-extern lean_object *uvl_host_frame(lean_object *r);
-extern lean_object *uvl_host_mark_clean(lean_object *r);
+extern lean_object *uvl_host_present(lean_object *r);
+extern lean_object *uvl_host_pixels(lean_object *r);
+extern lean_object *uvl_host_damage(lean_object *r);
 extern lean_object *uvl_host_target_center(lean_object *r, uint32_t i);
 
 extern void lean_initialize_runtime_module(void);
 extern void lean_io_mark_end_initialization(void);
 
 static lean_object *g_rt = NULL;    /* current AnyRuntime */
-static lean_object *g_frame = NULL; /* last presented ByteArray */
+static uint8_t *g_pixels = NULL;     /* RGBA of the last present, owned by g_rt */
+static double g_damage[4 * 16];      /* windows repainted by the last present */
+static uint32_t g_ndamage = 0;
 static double g_target[2];
 
 EMSCRIPTEN_KEEPALIVE int uvl_init(uint32_t w, uint32_t h) {
@@ -62,16 +67,25 @@ EMSCRIPTEN_KEEPALIVE int uvl_step(const double *events, uint32_t n, double dt_ms
   if (uvl_host_quit(g_rt)) return 2;
   lean_inc(g_rt);
   if (!uvl_host_dirty(g_rt)) return 0;
-  if (g_frame) lean_dec_ref(g_frame);
+  /* g_rt is the only reference here, so the frame is repainted in place */
+  g_rt = uvl_host_present(g_rt);
   lean_inc(g_rt);
-  g_frame = uvl_host_frame(g_rt);
-  g_rt = uvl_host_mark_clean(g_rt);
+  lean_object *px = uvl_host_pixels(g_rt);
+  g_pixels = lean_sarray_size(px) ? lean_sarray_cptr(px) : NULL;
+  lean_dec_ref(px); /* still alive: g_rt holds it */
+  lean_inc(g_rt);
+  lean_object *dmg = uvl_host_damage(g_rt);
+  size_t nd = lean_sarray_size(dmg) / 4;
+  if (nd > 16) nd = 16;
+  memcpy(g_damage, lean_float_array_cptr(dmg), sizeof(double) * 4 * nd);
+  g_ndamage = (uint32_t)nd;
+  lean_dec_ref(dmg);
   return 1;
 }
 
-EMSCRIPTEN_KEEPALIVE uint8_t *uvl_frame_ptr(void) {
-  return g_frame ? lean_sarray_cptr(g_frame) : NULL;
-}
+EMSCRIPTEN_KEEPALIVE uint8_t *uvl_frame_ptr(void) { return g_pixels; }
+EMSCRIPTEN_KEEPALIVE double *uvl_damage_ptr(void) { return g_damage; }
+EMSCRIPTEN_KEEPALIVE uint32_t uvl_damage_count(void) { return g_ndamage; }
 
 EMSCRIPTEN_KEEPALIVE uint32_t uvl_width(void) { lean_inc(g_rt); return uvl_host_width(g_rt); }
 EMSCRIPTEN_KEEPALIVE uint32_t uvl_height(void) { lean_inc(g_rt); return uvl_host_height(g_rt); }
