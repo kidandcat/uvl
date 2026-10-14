@@ -12,7 +12,7 @@ def primitives : Array RenderOp := #[
   .shadow ⟨32, 40, 200, 120⟩ 16 10 (Color.black.withAlpha 0.35),
   RenderOp.roundRect ⟨24, 28, 200, 120⟩ 16 Color.white,
   .stroke (.roundedRect ⟨24, 28, 200, 120⟩ (.all 16)) 2 (Color.hex 0x90CAF9),
-  .text ⟨40, 44⟩ "Hola, Lean 4!" 2 Color.darkGray,
+  .text ⟨40, 44⟩ "Hello, Lean 4!" 2 Color.darkGray,
   .text ⟨40, 72⟩ "SDF + FBIP" 1 (Color.hex 0x1565C0),
   .fill (.roundedRect ⟨40, 100, 72, 30⟩ ⟨15, 4, 15, 4⟩) Color.blue,
   .text ⟨53, 108⟩ "Click" 2 Color.white,
@@ -33,34 +33,34 @@ def primitives : Array RenderOp := #[
 open UI in
 /-- The example from the roadmap, written with the function API. -/
 def hello : UI.Widget Unit :=
-  center <| card <| col [ row [ text "Hola", button "Click" ] ]
+  center <| card <| col [ row [ text "Hello", button "Click" ] ]
 
 open UI in
 /-- A small dashboard written with the `ui!` DSL. -/
 def dashboard : UI.Widget Unit := ui! pad 20:
   col (gap := 16) (align := .stretch):
     row (gap := 12):
-      text "Universal Viz" (size := 3) (color := Color.hex 0x0D47A1)
+      text "UVL" (size := 3) (color := Color.hex 0x0D47A1)
       spacer
       chip "Lean 4"
-      chip "100% puro" (color := Color.hex 0xC8E6C9) (textColor := Color.hex 0x1B5E20)
+      chip "100% pure" (color := Color.hex 0xC8E6C9) (textColor := Color.hex 0x1B5E20)
     row (gap := 16) (align := .stretch):
       expanded:
         card:
           col (gap := 10) (align := .stretch):
-            text "Ventas por trimestre"
+            text "Sales per quarter"
             barChart [("Q1", 12), ("Q2", 19), ("Q3", 7), ("Q4", 24)] (h := 180)
       card:
         col (gap := 10) (align := .center):
-          text "Reparto"
+          text "Share"
           donutChart [5, 3, 2, 1]
     expanded:
       card:
         col (gap := 10) (align := .stretch):
           row:
-            text "Usuarios activos"
+            text "Active users"
             spacer
-            button "Exportar" (size := 1)
+            button "Export" (size := 1)
           expanded: lineChart [[3, 5, 4, 8, 7, 11, 10, 14], [1, 2, 4, 3, 6, 5, 8, 9]]
 
 end Examples

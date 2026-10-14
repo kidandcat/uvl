@@ -1,42 +1,42 @@
-# uvl — universal visualization library
+# UVL — universal visualization library
 
-Librería de visualización universal escrita **100% en Lean 4**: sin DOM, sin GTK/UIKit, sin
-dependencias en C. Lean controla todo, desde el árbol de widgets hasta el último píxel; la
-plataforma anfitriona solo tiene que entregar un *framebuffer* y un flujo de eventos.
+A visualization and UI library written **100% in Lean 4**: no DOM, no GTK/UIKit, no C
+dependencies. Lean controls everything, from the widget tree down to the last pixel; the host
+platform only has to provide a *framebuffer* and a stream of events.
 
 ![dashboard](Tests/golden/dashboard.png)
 
-## Estado
+## Status
 
-| Hito | Contenido | Estado |
+| Milestone | Contents | Status |
 | --- | --- | --- |
-| 1. Core e imagen | `FrameBuffer` verificado, primitivas 2D con SDF, paths Bézier, gradientes, sombras, texto, rasterizador CPU, PNG/PPM | ✅ |
-| 2. Layout y DSL | Motor *Box Constraints* con invariantes en el tipo, flex (row/col/expanded), stack, DSL `ui!`, gráficos | ✅ (primera versión) |
-| 3. Interactividad desktop | Runtime estilo Elm (`App`, `Event`), hit testing, hover/press, runner SDL3 (~170 líneas de C) | ✅ |
-| 4. GPU y navegador | `webgpu.h`, Emscripten | pendiente |
+| 1. Core and image | Verified `FrameBuffer`, SDF-based 2D primitives, Bézier paths, gradients, shadows, text, CPU rasterizer, PNG/PPM | ✅ |
+| 2. Layout and DSL | *Box constraints* layout engine with invariants in the types, flex (row/col/expanded), stack, `ui!` DSL, charts | ✅ (first version) |
+| 3. Desktop interactivity | Elm-style runtime (`App`, `Event`), hit testing, hover/press, SDL3 runner (~170 lines of C) | ✅ |
+| 4. GPU and browser | WebGPU, Emscripten | in progress |
 | Bare metal | Tiled rendering (RGB565 / 1-bit, identical to the full frame), C runtime without `libleanrt` tested on ARM Cortex-M3 (QEMU); see [`baremetal/`](baremetal/README.md) | in progress |
 
-## Uso rápido
+## Quick start
 
 ```bash
-lake build              # la librería
-lake exe uvl-demo      # escribe out/primitives.png, out/hello.png, out/dashboard.png
-lake test               # tests golden + layout + códecs
-lake test -- --update   # regenera las imágenes golden
-lake exe uvl-bench     # tiempo por frame del rasterizador
-lake exe uvl-counter    # app de escritorio (requiere SDL3)
+lake build              # the library
+lake exe uvl-demo       # writes out/primitives.png, out/hello.png, out/dashboard.png
+lake test               # golden image, layout and codec tests
+lake test -- --update   # regenerate the golden images
+lake exe uvl-bench      # rasterizer time per frame
+lake exe uvl-counter    # desktop app (needs SDL3)
 ```
 
-Requiere Lean `v4.35.0` (fijado en `lean-toolchain`).
+Requires Lean `v4.35.0` (pinned in `lean-toolchain`).
 
-### API de funciones
+### Function API
 
 ```lean
 import UVL
 open UVL UI
 
 def hello : UI.Widget Unit :=
-  center <| card <| col [ row [ text "Hola", button "Click" ] ]
+  center <| card <| col [ row [ text "Hello", button "Click" ] ]
 
 def main : IO Unit :=
   Image.writePNG "hello.png" (UI.render hello 320 160)
@@ -44,17 +44,17 @@ def main : IO Unit :=
 
 ![hello](Tests/golden/hello.png)
 
-### DSL `ui!`
+### The `ui!` DSL
 
-Sintaxis por indentación; cada línea es `widget args*` y `:` abre un bloque de hijos
-(o `;` en la misma línea). Es azúcar puro sobre la API de funciones: `nombre` se resuelve a
-`UVL.UI.nombre`, así que añadir un widget nuevo es definir una función.
+Indentation-based syntax: each line is `widget args*`, and `:` opens a block of children (or
+`;` on the same line). It is pure sugar over the function API: `name` resolves to
+`UVL.UI.name`, so adding a new widget is just defining a function.
 
 ```lean
 def dashboard : UI.Widget Unit := ui! pad 20:
   col (gap := 16) (align := .stretch):
     row (gap := 12):
-      text "Universal Viz" (size := 3)
+      text "UVL" (size := 3)
       spacer
       chip "Lean 4"
     expanded:
@@ -62,12 +62,12 @@ def dashboard : UI.Widget Unit := ui! pad 20:
         lineChart [[3, 5, 4, 8, 7, 11], [1, 2, 4, 3, 6, 5]]
 ```
 
-### Apps interactivas (arquitectura Elm)
+### Interactive apps (Elm architecture)
 
-Una app es `init`, un `update : Msg → Model → Model` puro y un
-`view : Model → Widget Msg` puro. El runtime (también puro) se encarga del layout,
-del *hit testing*, del feedback de hover/press y de decidir cuándo hace falta un frame
-nuevo. Ver [Examples/Counter.lean](Examples/Counter.lean):
+An app is `init`, a pure `update : Msg → Model → Model` and a pure
+`view : Model → Widget Msg`. The runtime (also pure) takes care of layout, hit testing,
+hover/press feedback and deciding when a new frame is needed. See
+[Examples/Counter.lean](Examples/Counter.lean):
 
 ```lean
 inductive Msg | inc | dec | reset
@@ -83,38 +83,37 @@ def app : App Model Msg where
   init := {}
   update
   view
-  subscriptions                      -- teclado, ticks, ...
+  subscriptions                      -- keyboard, ticks, ...
     | .keyDown .up, _ => some .inc
     | _, _ => none
 ```
 
 ![counter](Tests/golden/counter.png)
 
-* **Escritorio:** `UVL.SDL.run app` abre una ventana con SDL3. El shell en C
-  ([native/sdl_shell.c](native/sdl_shell.c)) solo traduce eventos y copia el buffer RGBA a
-  una textura; no hay lógica de UI en C. Solo se redibuja cuando algo cambia, así que una UI
-  en reposo no gasta CPU.
-* **Headless / tests:** `Runtime.simulate` alimenta eventos de un guion; los tests hacen
-  clics y comparan el frame resultante con una imagen golden.
+* **Desktop:** `UVL.SDL.run app` opens a window with SDL3. The C shell
+  ([native/sdl_shell.c](native/sdl_shell.c)) only translates events and copies the RGBA buffer
+  into a texture; there is no UI logic in C. Frames are only redrawn when something changed,
+  so an idle UI costs no CPU.
+* **Headless / tests:** `Runtime.simulate` feeds a script of events; the tests click around
+  and compare the resulting frame with a golden image.
 
-Para compilar la app de escritorio hace falta SDL3 (`brew install sdl3`, o compilarlo
-desde las releases de GitHub). Lake lo busca con `pkg-config sdl3` o en los prefijos
-habituales. Sin pantalla se puede probar con
+Building the desktop app needs SDL3 (`brew install sdl3`, or build it from the GitHub
+releases). Lake finds it with `pkg-config sdl3` or in the usual prefixes. Without a display it
+can be tested with
 `SDL_VIDEO_DRIVER=offscreen UVL_MAX_FRAMES=2 UVL_CLICK_TARGET=1 UVL_SCREENSHOT=shot.png lake exe uvl-counter`.
 
-### Rendimiento
+### Performance
 
-CPU, un núcleo, 800×600 (`lake exe uvl-bench`): contador ~7 ms/frame, dashboard completo
-~35 ms/frame. Dos claves:
+`lake exe uvl-bench` measures CPU time per frame (one core, 800×600). Two things matter most:
 
-* El rasterizador aprovecha que un SDF es 1-Lipschitz: con una evaluación salta tramos
-  enteros fuera de la forma o rellena tramos enteros dentro, y solo evalúa píxel a píxel el
-  borde antialiasado.
-* Los literales `Float` se elaboran a `Float.ofBits` con el patrón de bits calculado en
-  compilación ([Core/FloatLit.lean](UVL/Core/FloatLit.lean)); Lean los compilaba
-  como `Float.ofScientific` con aritmética de precisión arbitraria en cada evaluación.
+* The rasterizer exploits that an SDF is 1-Lipschitz: one evaluation skips whole runs of
+  pixels outside the shape or fills whole runs inside it, and only the anti-aliased edge is
+  evaluated pixel by pixel.
+* `Float` literals are elaborated to `Float.ofBits` with the bit pattern computed at compile
+  time ([Core/FloatLit.lean](UVL/Core/FloatLit.lean)); Lean compiled them as
+  `Float.ofScientific`, with arbitrary-precision arithmetic on every evaluation.
 
-### Escena de bajo nivel (`RenderOp`)
+### Low-level scenes (`RenderOp`)
 
 ```lean
 def scene : Array RenderOp := #[
@@ -128,54 +127,55 @@ def scene : Array RenderOp := #[
 
 ![primitives](Tests/golden/primitives.png)
 
-## Arquitectura
+## Architecture
 
 ```
 UVL/
-  Core/       Color, Vec2/Rect/Affine, literales Float rápidos
-  Render/     FrameBuffer (verificado), SDF, Paint, Path, Font, RenderOp, Raster
-  Output/     Deflate/zlib y PNG/PPM en Lean puro
-  Layout/     Constraints, Placed (árbol posicionado), Widget + motor de layout
-  UI/         API de widgets, DSL ui!, gráficos (barras, líneas, donut)
-  App/        Event, App y Runtime (Elm architecture, hit testing)
-UVLWindow.lean  shell SDL3 (FFI) — solo lo usan los ejecutables uvl-*
+  Core/       Color, Vec2/Rect/Affine, fast Float literals, pixel formats
+  Render/     FrameBuffer (verified), SDF, Paint, Path, Font, RenderOp, Raster, Tile
+  Output/     Deflate/zlib and PNG/PPM in pure Lean
+  Layout/     Constraints, Placed (positioned tree), Widget + layout engine
+  UI/         widget API, ui! DSL, charts (bar, line, donut)
+  App/        Event, App and Runtime (Elm architecture, hit testing)
+  BareMetal/  app shell for microcontrollers (see baremetal/)
+UVLWindow.lean  SDL3 shell (FFI), only used by the uvl-* window executables
 native/       sdl_shell.c
-Examples/     escenas de ejemplo + ejecutable de demo
-Tests/        imágenes golden, decodificador PNG de test, test driver
+baremetal/    C runtime and tooling for running UVL apps without libleanrt
+Examples/     example scenes and apps, demo executable
+Tests/        golden images, test PNG decoder, test driver
 ```
 
-### Qué está garantizado por tipos
+### What the types guarantee
 
-* **Ninguna escritura fuera del buffer.** `FrameBuffer w h` lleva la prueba
-  `data.size = w * h * 4`; los píxeles se direccionan con `Fin w × Fin h` y
-  `pixel_index_lt` demuestra que el offset de cada byte está en rango. Los bucles del
-  rasterizador recorren un `Clip w h` con cotas probadas, así que no hay *bounds checks*
-  en el camino caliente.
-* **Mutación in situ.** El `FrameBuffer` se pasa de función en función con referencia única,
-  y el runtime de Lean (Perceus/FBIP) muta el `ByteArray` sin copias.
-* **El tamaño de un widget siempre respeta las restricciones del padre.**
-  `layout w c : Result c` incluye `ok : c.Admits size`
-  (`minW ≤ w ≤ maxW ∧ minH ≤ h ≤ maxH`). Ver `Constraints.constrain_admits`.
-* **Ningún hijo se sale de su padre.** El árbol posicionado `Placed s` está indexado por su
-  tamaño y cada hijo lleva la prueba `x + child.w ≤ s.w ∧ y + child.h ≤ s.h`; un árbol con
-  *overflow* simplemente no tipa.
-* **El layout siempre termina.** `layout` es una función total (recursión bien fundada sobre
-  el árbol de widgets), no `partial`.
+* **No write outside the buffer.** `FrameBuffer w h` carries the proof
+  `data.size = w * h * 4`; pixels are addressed with `Fin w × Fin h` and `pixel_index_lt`
+  proves that every byte offset is in range. The rasterizer loops walk a `Clip w h` with
+  proven bounds, so there are no bounds checks on the hot path.
+* **In-place mutation.** The `FrameBuffer` is threaded from function to function with a
+  unique reference, and Lean's runtime (Perceus/FBIP) mutates the `ByteArray` without copies.
+* **A widget's size always respects its parent's constraints.**
+  `layout w c : Result c` includes `ok : c.Admits size`
+  (`minW ≤ w ≤ maxW ∧ minH ≤ h ≤ maxH`). See `Constraints.constrain_admits`.
+* **No child overflows its parent.** The positioned tree `Placed s` is indexed by its size
+  and every child carries the proof `x + child.w ≤ s.w ∧ y + child.h ≤ s.h`; a tree with
+  overflow simply does not type-check.
+* **Layout always terminates.** `layout` is a total function (well-founded recursion over
+  the widget tree), not `partial`.
 
-### Rasterizador
+### Rasterizer
 
-* Formas analíticas (rectángulos, rectángulos con radios por esquina, círculos, elipses,
-  segmentos, sombras gaussianas) a partir de su SDF: una evaluación de distancia por píxel y
-  antialiasing gratis.
-* Paths (líneas, Bézier cuadráticas y cúbicas) aplanados y rellenados por scanline con
-  regla *non-zero* o *even-odd*, cobertura horizontal exacta y 4 sub-muestras verticales.
-* Trazos con uniones y extremos redondeados; transformaciones afines y recorte anidados.
-* Texto con una fuente bitmap 5×7 integrada (ASCII + acentos y ñ), rasterizada con
-  cobertura de área exacta para cualquier escala. TTF + MSDF está previsto para más adelante.
+* Analytic shapes (rectangles, rectangles with per-corner radii, circles, ellipses, segments,
+  Gaussian shadows) from their SDF: one distance evaluation per pixel and anti-aliasing for
+  free.
+* Paths (lines, quadratic and cubic Béziers) flattened and filled by scanline with the
+  *non-zero* or *even-odd* rule, exact horizontal coverage and 4 vertical subsamples.
+* Strokes with round joins and caps; nested affine transforms and clipping.
+* Text with a built-in 5×7 bitmap font (ASCII plus accented letters), rasterized with exact
+  area coverage at any scale. TrueType + MSDF is planned.
 
-## Próximos pasos
+## Next steps
 
-1. Hito 4: backend `webgpu.h` y build con Emscripten (el mismo `Runtime` en el navegador).
-2. Texto con salto de línea y parser TrueType + atlas MSDF.
-3. Widgets con estado propio: campo de texto, scroll, sliders; animaciones con `tick`.
-4. Redibujado parcial (solo las regiones sucias) para pantallas grandes.
+1. Milestone 4: WebGPU presenter and Emscripten build (the same `Runtime` in the browser).
+2. Line-wrapping text, a TrueType parser and an MSDF atlas.
+3. Stateful widgets: text field, scrolling, sliders; animations with `tick`.
+4. Partial redraw (dirty regions only) for large screens.

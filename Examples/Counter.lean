@@ -28,9 +28,9 @@ def update : Msg → Model → Model
 def view (m : Model) : UI.Widget Msg := ui! pad 24:
   col (gap := 16) (align := .stretch):
     row (gap := 12):
-      text "Contador" (size := 3) (color := Color.hex 0x0D47A1)
+      text "Counter" (size := 3) (color := Color.hex 0x0D47A1)
       spacer
-      chip "+/- o flechas"
+      chip "+/- or arrows"
     card:
       row (gap := 16) (justify := .center):
         button "-" (size := 4) (color := Color.red) (onTap := some Msg.dec)
@@ -40,7 +40,7 @@ def view (m : Model) : UI.Widget Msg := ui! pad 24:
       card:
         col (gap := 8) (align := .stretch):
           row:
-            text "Historial"
+            text "History"
             spacer
             button "Reset" (size := 1) (color := Color.gray) (onTap := some Msg.reset)
           expanded:
@@ -56,6 +56,6 @@ def app : App Model Msg where
     | .keyDown (.char 'r'), _ => some .reset
     | _, _ => none
   background := Color.hex 0xF5F7FA
-  title := "uvl · contador"
+  title := "uvl · counter"
 
 end Examples.Counter

@@ -6,7 +6,7 @@ import UVL.UI.Basic
 
 ```
 ui! col (gap := 12):
-  text "Hola" (size := 3)
+  text "Hello" (size := 3)
   row: text "Lean"; button "Click"
   spacer
 ```

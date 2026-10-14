@@ -90,8 +90,8 @@ def check (name : String) (cond : Bool) : IO Bool := do
 def layoutTests : IO Bool := do
   let rects := (layout Examples.hello (Constraints.tight ⟨320, 160⟩)).node.rects 0 0
   let t1 ← check "hello: card centered, row content placed" (rects ==
-    [(0, 0, 320, 160), (74, 49, 172, 62), (74, 49, 172, 62), (90, 65, 140, 30), (90, 65, 140, 30),
-     (90, 73, 46, 14), (144, 65, 86, 30), (144, 65, 86, 30), (158, 73, 58, 14)])
+    [(0, 0, 320, 160), (68, 49, 184, 62), (68, 49, 184, 62), (84, 65, 152, 30), (84, 65, 152, 30),
+     (84, 73, 58, 14), (150, 65, 86, 30), (150, 65, 86, 30), (164, 73, 58, 14)])
   -- Re-check the (already proved) Admits invariant at runtime over a sweep.
   let widgets : List (UI.Widget Unit) := [Examples.hello, Examples.dashboard, UI.text "overflowing text that is long",
     UI.row [UI.box 500 20, UI.box 500 20], UI.col [UI.spacer, UI.box 10 10, UI.spacer 2]]

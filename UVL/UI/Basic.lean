@@ -7,7 +7,7 @@ import UVL.Render.Raster
 The function-call API of the declarative layer:
 
 ```
-col [ row [ text "Hola", button "Click" (onTap := .clicked) ] ]
+col [ row [ text "Hello", button "Click" (onTap := .clicked) ] ]
 ```
 
 Every function returns a `UI.Widget Msg`, where `Msg` is the application's
