@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>uvl · counter</title>
+  <title>uvl</title>
   <style>
     html, body { margin: 0; height: 100%; background: #f2f2f2; font: 14px system-ui, sans-serif; }
     main { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px; }
@@ -22,8 +22,12 @@
     import { startUVL } from './uvl-web.js';
     const status = document.getElementById('status');
     try {
-      const backend = new URLSearchParams(location.search).get('backend');
-      window.uvl = await startUVL(document.getElementById('app'), createUVL, { backend });
+      const params = new URLSearchParams(location.search);
+      const backend = params.get('backend');
+      const size = params.get('size')?.match(/^(\d+)x(\d+)$/);
+      const canvas = document.getElementById('app');
+      if (size) { canvas.style.width = `${size[1]}px`; canvas.style.height = `${size[2]}px`; }
+      window.uvl = await startUVL(canvas, createUVL, { backend });
       status.textContent = `Lean → WebAssembly · ${window.uvl.state.backend}`;
     } catch (e) {
       status.textContent = `error: ${e.message}`;

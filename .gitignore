@@ -2,3 +2,4 @@
 /out
 /Tests/out
 web/dist/
+web/dist-*/

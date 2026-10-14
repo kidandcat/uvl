@@ -23,4 +23,5 @@ import UVL.UI.Charts
 import UVL.App.Event
 import UVL.App.Runtime
 import UVL.App.Host
+import UVL.GPU.Reference
 import UVL.BareMetal.Shell

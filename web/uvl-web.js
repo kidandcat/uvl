@@ -1,12 +1,17 @@
 // Browser shell for uvl apps compiled to WebAssembly.
 //
 // The Lean side (web_shell.c + UVL.AnyRuntime) is pure: it takes packed input
-// events and returns RGBA frames. This file only
+// events and returns frames. This file only
 //   * collects DOM input into the packed format (5 doubles per event, same
 //     encoding as the SDL shell, see UVL/App/Host.lean),
 //   * runs the requestAnimationFrame loop, and
-//   * presents frames with WebGPU (a textured full-screen triangle), falling
-//     back to Canvas 2D when WebGPU is unavailable.
+//   * draws frames with one of three backends:
+//       gpu      the scene rendered on the GPU: Lean lowers it to primitives
+//                and generates the WGSL program (UVL/GPU); this file only
+//                uploads buffers and issues one draw call (default);
+//       webgpu   Lean rasterizes on the CPU, the GPU only presents the
+//                damaged windows of the frame;
+//       canvas2d the same CPU frames through putImageData (no WebGPU).
 
 const EV = { move: 1, down: 2, up: 3, scroll: 4, keyDown: 5, keyUp: 6, text: 7, resize: 8, leave: 10 };
 
@@ -35,17 +40,141 @@ const SHADER = /* wgsl */ `
   return vec4f(c.rgb, 1.0);
 }`;
 
-class WebGPUPresenter {
-  static async create(canvas, onLost) {
-    if (!navigator.gpu) return null;
-    const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) return null;
-    const device = await adapter.requestDevice();
-    device.addEventListener('uncapturederror', (e) => console.error(`WebGPU: ${e.error.message}`));
-    device.lost.then((info) => onLost(info.message));
+
+// Pixels outside every primitive keep the clear color; each primitive blends
+// `shade(...)` (straight alpha) over the frame like FrameBuffer.blend.
+const BLEND = {
+  color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+  alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+};
+
+class GPURenderer {
+  /** Compile the Lean-generated WGSL; throws when it does not compile. */
+  static async create(canvas, device, code) {
     const context = canvas.getContext('webgpu');
-    if (!context) return null;
-    return new WebGPUPresenter(canvas, device, context);
+    if (!context) throw new Error('no webgpu canvas context');
+    const module = device.createShaderModule({ code });
+    const info = await module.getCompilationInfo();
+    const errors = info.messages.filter((m) => m.type === 'error');
+    if (errors.length) {
+      throw new Error(`WGSL: ${errors.map((m) => `${m.lineNum}:${m.linePos} ${m.message}`).join('; ')}`);
+    }
+    return new GPURenderer(canvas, device, context, module);
+  }
+
+  constructor(canvas, device, context, module) {
+    this.name = 'gpu';
+    this.device = device;
+    this.context = context;
+    this.format = navigator.gpu.getPreferredCanvasFormat();
+    context.configure({
+      device, format: this.format, alphaMode: 'opaque',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    });
+    this.pipeline = device.createRenderPipeline({
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs' },
+      fragment: { module, entryPoint: 'fs', targets: [{ format: this.format, blend: BLEND }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    this.screen = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.prims = null;
+    this.data = null;
+    this.scene = null;
+  }
+
+  /** A storage buffer of at least `bytes`, reallocated (and the bind group
+   * rebuilt) only when it has to grow. */
+  ensure(which, bytes) {
+    const size = Math.max(16, Math.ceil(bytes / 16) * 16);
+    if (this[which] && this[which].size >= size) return;
+    this[which]?.destroy();
+    this[which] = this.device.createBuffer({
+      size: Math.max(size, (this[which]?.size ?? 0) * 2),
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    this.bindGroup = null;
+  }
+
+  /** Draw `scene` ({prims, data: Float32Array, count, bg: [r,g,b,a]}). */
+  render(scene, w, h, readback = null) {
+    const { device } = this;
+    this.scene = scene;
+    this.ensure('prims', scene.prims.byteLength);
+    this.ensure('data', scene.data.byteLength);
+    if (!this.bindGroup) {
+      this.bindGroup = device.createBindGroup({
+        layout: this.pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: this.prims } },
+          { binding: 1, resource: { buffer: this.data } },
+          { binding: 2, resource: { buffer: this.screen } },
+        ],
+      });
+    }
+    if (scene.prims.length) device.queue.writeBuffer(this.prims, 0, scene.prims);
+    if (scene.data.length) device.queue.writeBuffer(this.data, 0, scene.data);
+    device.queue.writeBuffer(this.screen, 0, new Float32Array([w, h, 0, 0]));
+    const encoder = device.createCommandEncoder();
+    const target = this.context.getCurrentTexture();
+    const [r, g, b] = scene.bg;
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [r, g, b, 1] }],
+    });
+    pass.setPipeline(this.pipeline);
+    pass.setBindGroup(0, this.bindGroup);
+    if (scene.count) pass.draw(6, scene.count);
+    pass.end();
+    if (readback) {
+      encoder.copyTextureToBuffer({ texture: target }, { buffer: readback.buffer, bytesPerRow: readback.stride }, [w, h]);
+    }
+    device.queue.submit([encoder.finish()]);
+  }
+
+  /** Render the last scene again and read the canvas texture back as RGBA. */
+  async readback(w, h) {
+    return readTexture(this.device, this.format, w, h, (rb) => this.render(this.scene, w, h, rb));
+  }
+}
+
+/** Run `draw({buffer, stride})` (which must copy the canvas texture into the
+ * buffer) and return the pixels as tightly packed RGBA. */
+async function readTexture(device, format, w, h, draw) {
+  const stride = Math.ceil(w * 4 / 256) * 256;
+  const buffer = device.createBuffer({ size: stride * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  draw({ buffer, stride });
+  await buffer.mapAsync(GPUMapMode.READ);
+  const src = new Uint8Array(buffer.getMappedRange());
+  const out = new Uint8Array(w * h * 4);
+  const bgra = format === 'bgra8unorm';
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * stride + x * 4, o = (y * w + x) * 4;
+      out[o] = src[i + (bgra ? 2 : 0)];
+      out[o + 1] = src[i + 1];
+      out[o + 2] = src[i + (bgra ? 0 : 2)];
+      out[o + 3] = src[i + 3];
+    }
+  }
+  buffer.unmap();
+  buffer.destroy();
+  return out;
+}
+
+async function createDevice(onLost) {
+  if (!navigator.gpu) return null;
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) return null;
+  const device = await adapter.requestDevice();
+  device.addEventListener('uncapturederror', (e) => console.error(`WebGPU: ${e.error.message}`));
+  device.lost.then((info) => onLost(info.message));
+  return device;
+}
+
+class WebGPUPresenter {
+  static create(canvas, device) {
+    const context = canvas.getContext('webgpu');
+    return context ? new WebGPUPresenter(canvas, device, context) : null;
   }
 
   constructor(canvas, device, context) {
@@ -110,28 +239,8 @@ class WebGPUPresenter {
 
   /** Redraw the current texture (no upload, so this checks the accumulated
    * partial uploads) and read back the canvas texture as RGBA bytes. */
-  async readback(pixels, w, h) {
-    const stride = Math.ceil(w * 4 / 256) * 256;
-    const buffer = this.device.createBuffer({
-      size: stride * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
-    this.present(pixels, w, h, [], { buffer, stride });
-    await buffer.mapAsync(GPUMapMode.READ);
-    const src = new Uint8Array(buffer.getMappedRange());
-    const out = new Uint8Array(w * h * 4);
-    const bgra = this.format === 'bgra8unorm';
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = y * stride + x * 4, o = (y * w + x) * 4;
-        out[o] = src[i + (bgra ? 2 : 0)];
-        out[o + 1] = src[i + 1];
-        out[o + 2] = src[i + (bgra ? 0 : 2)];
-        out[o + 3] = src[i + 3];
-      }
-    }
-    buffer.unmap();
-    buffer.destroy();
-    return out;
+  async readback(w, h) {
+    return readTexture(this.device, this.format, w, h, (rb) => this.present(null, w, h, [], rb));
   }
 }
 
@@ -149,7 +258,8 @@ class Canvas2DPresenter {
 }
 
 /** Start a uvl app on `canvas`. Resolves to a small control object.
- * `backend: 'canvas2d'` skips WebGPU. */
+ * `backend`: 'gpu' (default), 'webgpu' or 'canvas2d' (see the top of this file);
+ * unavailable backends fall back to the next one. */
 export async function startUVL(canvas, createModule, { backend } = {}) {
   const size = () => {
     const r = canvas.getBoundingClientRect();
@@ -167,15 +277,23 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     return Array.from({ length: mod._uvl_damage_count() }, (_, i) =>
       Array.from(mod.HEAPF64.subarray(p + 4 * i, p + 4 * i + 4)));
   };
-  // `damaged`: pixels uploaded for the last frame
-  const state = { backend: 'none', frames: 0, damaged: 0, quit: false };
+  // the primitives of the last frame, in GPU mode (views on the wasm heap)
+  const gpuScene = () => ({
+    prims: mod.HEAPF32.subarray(mod._uvl_gpu_prims() / 4, mod._uvl_gpu_prims() / 4 + mod._uvl_gpu_prims_len()),
+    data: mod.HEAPF32.subarray(mod._uvl_gpu_data() / 4, mod._uvl_gpu_data() / 4 + mod._uvl_gpu_data_len()),
+    count: mod._uvl_gpu_count(),
+    bg: Array.from(mod.HEAPF32.subarray(mod._uvl_gpu_background() / 4, mod._uvl_gpu_background() / 4 + 4)),
+  });
+  // damaged: pixels uploaded for the last CPU frame; prims: primitives drawn
+  // for the last GPU frame; leanMs: time spent in Lean for the last frame
+  const state = { backend: 'none', frames: 0, damaged: 0, prims: 0, leanMs: 0, quit: false };
 
   // A lost WebGPU device (driver reset, or software adapters in some headless
   // browsers) falls back to Canvas 2D. A canvas that has a WebGPU context can
   // never get a 2D one, so it is swapped for a fresh element.
   let presenter = null;
   const fallBack = (why) => {
-    if (presenter?.name !== 'webgpu') return;
+    if (presenter?.name !== 'webgpu' && presenter?.name !== 'gpu') return;
     console.warn(`WebGPU device lost (${why}); falling back to Canvas 2D`);
     const fresh = canvas.cloneNode(false);
     canvas.replaceWith(fresh);
@@ -185,17 +303,23 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     bind(canvas);
     presenter = new Canvas2DPresenter(canvas);
     state.backend = presenter.name;
-    if (state.frames) presenter.present(framePixels(), w, h);
+    mod._uvl_set_gpu(0); // the next step rasterizes a complete frame
   };
+  if (!mod._uvl_init(w, h)) throw new Error('uvl: Lean initialization failed');
   if (backend !== 'canvas2d') {
-    presenter = await WebGPUPresenter.create(canvas, (why) => fallBack(why)).catch((e) => {
+    const device = await createDevice((why) => fallBack(why)).catch((e) => {
       console.warn(`WebGPU unavailable: ${e.message}`);
       return null;
     });
+    if (device && backend !== 'webgpu') {
+      presenter = await GPURenderer.create(canvas, device, mod.UTF8ToString(mod._uvl_gpu_shader_source()))
+        .catch((e) => { console.warn(`GPU renderer unavailable: ${e.message}`); return null; });
+    }
+    if (device && !presenter) presenter = WebGPUPresenter.create(canvas, device);
   }
   presenter ??= new Canvas2DPresenter(canvas);
   state.backend = presenter.name;
-  if (!mod._uvl_init(w, h)) throw new Error('uvl: Lean initialization failed');
+  mod._uvl_set_gpu(presenter.name === 'gpu' ? 1 : 0);
 
   const queue = [];
   const push = (kind, a = 0, b = 0, c = 0, d = 0) => queue.push(kind, a, b, c, d);
@@ -230,6 +354,24 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
 
   let buf = 0, cap = 0, last = performance.now();
 
+  // draw the frame produced by the last `_uvl_step`
+  function draw() {
+    const resized = mod._uvl_width() !== w || mod._uvl_height() !== h;
+    w = mod._uvl_width();
+    h = mod._uvl_height();
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    if (presenter.name === 'gpu') {
+      const scene = gpuScene();
+      presenter.render(scene, w, h);
+      state.prims = scene.count;
+    } else {
+      const damage = resized || !state.frames ? null : damageWindows();
+      presenter.present(framePixels(), w, h, damage);
+      state.damaged = damage ? damage.reduce((a, [, , dw, dh]) => a + dw * dh, 0) : w * h;
+    }
+    state.frames++;
+  }
+
   function frame(now) {
     const n = queue.length / 5;
     if (n > cap) {
@@ -239,18 +381,13 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     }
     if (n) mod.HEAPF64.set(queue, buf / 8);
     queue.length = 0;
+    const t0 = performance.now();
     const r = mod._uvl_step(buf, n, now - last);
     last = now;
     if (r === 2) { state.quit = true; return; }
     if (r === 1) {
-      w = mod._uvl_width();
-      h = mod._uvl_height();
-      let damage = null;
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-      else if (state.frames) damage = damageWindows();
-      presenter.present(framePixels(), w, h, damage);
-      state.damaged = damage ? damage.reduce((a, [, , dw, dh]) => a + dw * dh, 0) : w * h;
-      state.frames++;
+      state.leanMs = performance.now() - t0;
+      draw();
     }
     requestAnimationFrame(frame);
   }
@@ -265,15 +402,32 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
       const p = mod._uvl_target_center(i);
       return p ? [mod.HEAPF64[p / 8], mod.HEAPF64[p / 8 + 1]] : null;
     },
-    /** Copy of the last presented frame (RGBA). */
+    /** The current frame rasterized by the CPU (RGBA copy); in GPU mode this
+     * is the reference the GPU output is compared with. */
     snapshot() {
-      const p = mod._uvl_frame_ptr();
+      const p = presenter.name === 'gpu' ? mod._uvl_render_cpu() : mod._uvl_frame_ptr();
       return p ? mod.HEAPU8.slice(p, p + w * h * 4) : null;
     },
-    /** What the GPU actually drew for the last frame (WebGPU only, for tests). */
+    /** Average cost of `n` complete frames (no partial redraw): time in Lean
+     * and time until the GPU finished drawing. */
+    async measure(n = 30) {
+      let lean = 0, total = 0;
+      for (let i = 0; i < n; i++) {
+        mod._uvl_set_gpu(presenter.name === 'gpu' ? 1 : 0);
+        const t0 = performance.now();
+        mod._uvl_step(0, 0, 0);
+        const t1 = performance.now();
+        draw();
+        await presenter.device?.queue.onSubmittedWorkDone();
+        const t2 = performance.now();
+        lean += t1 - t0;
+        total += t2 - t0;
+      }
+      return { leanMs: lean / n, frameMs: total / n };
+    },
+    /** What the GPU actually drew for the last frame (WebGPU backends, for tests). */
     async gpuReadback() {
-      if (!mod._uvl_frame_ptr() || !presenter.readback) return null;
-      return presenter.readback(mod.HEAPU8.slice(mod._uvl_frame_ptr(), mod._uvl_frame_ptr() + w * h * 4), w, h);
+      return presenter.readback ? presenter.readback(w, h) : null;
     },
   };
 }

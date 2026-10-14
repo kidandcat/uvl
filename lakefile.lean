@@ -9,11 +9,11 @@ package uvl where
 lean_lib UVL
 
 lean_lib Tests where
-  globs := #[.one `Tests.PngDecode, .one `Tests.Tile, .one `Tests.Damage]
+  globs := #[.one `Tests.PngDecode, .one `Tests.Tile, .one `Tests.Damage, .one `Tests.GPU]
 
 lean_lib Examples where
   globs := #[.one `Examples.Scenes, .one `Examples.Counter, .one `Examples.BareMetalCounter,
-    .one `Examples.CounterWeb]
+    .one `Examples.CounterWeb, .one `Examples.DashboardWeb]
 
 lean_exe «uvl-demo» where
   root := `Examples.Demo

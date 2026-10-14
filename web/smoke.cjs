@@ -2,9 +2,13 @@
 //
 //   node web/smoke.cjs [dist-dir] [screenshot.png]
 //
-// Serves web/dist, opens it in headless Chromium (WebGPU enabled through
-// SwiftShader when available), waits for the first frame, clicks the first
-// tap target with a real mouse event and checks that the app re-rendered.
+// Serves web/dist, opens it in headless Chromium (WebGPU over Vulkan when
+// available), waits for the first frame, clicks the first tap target with a
+// real mouse event and checks that the app re-rendered, then hovers another
+// button and compares what the GPU drew with the CPU rasterizer.
+// UVL_BACKEND=gpu|webgpu|canvas2d picks the backend (default: gpu),
+// UVL_SIZE=WxH the canvas size, and UVL_STATIC=1 skips the interaction steps
+// (for apps without tap targets).
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -40,51 +44,70 @@ function diff(a, b) {
   });
   let failed = false;
   try {
-    const page = await browser.newPage({ viewport: { width: 640, height: 480 } });
+    const [sw, sh] = (process.env.UVL_SIZE || '480x360').split('x').map(Number);
+    const page = await browser.newPage({ viewport: { width: sw + 160, height: sh + 120 } });
     page.on('console', (m) => console.log(`[page] ${m.text()}`));
     page.on('pageerror', (e) => { console.log(`[page error] ${e.message}`); failed = true; });
-    await page.goto(url + (process.env.UVL_BACKEND ? `?backend=${process.env.UVL_BACKEND}` : ''));
+    const query = new URLSearchParams();
+    if (process.env.UVL_BACKEND) query.set('backend', process.env.UVL_BACKEND);
+    if (process.env.UVL_SIZE) query.set('size', process.env.UVL_SIZE);
+    await page.goto(`${url}?${query}`);
     await page.waitForFunction(() => window.uvl && window.uvl.state.frames >= 1, null, { timeout: 30000 });
     await page.waitForTimeout(500); // a lost WebGPU device falls back to Canvas 2D
     const backend = await page.evaluate(() => window.uvl.state.backend);
     console.log(`backend: ${backend}`);
 
-    const before = await page.evaluate(() => Array.from(window.uvl.snapshot()));
-    const target = await page.evaluate(() => window.uvl.targetCenter(0));
-    if (!target) throw new Error('no tap target');
-    const box = await page.locator('#app').boundingBox();
-    const frames = await page.evaluate(() => window.uvl.state.frames);
-    const t0 = Date.now();
-    await page.mouse.click(box.x + target[0], box.y + target[1]);
-    await page.mouse.move(box.x + 2, box.y + 2); // leave the button so hover does not differ
-    await page.waitForFunction((f) => window.uvl.state.frames > f, frames, { timeout: 10000 });
-    await page.waitForTimeout(200);
-    console.log(`click → new frame in ${Date.now() - t0} ms`);
-    const after = await page.evaluate(() => Array.from(window.uvl.snapshot()));
-    const changed = diff(before, after);
-    console.log(`changed bytes after click: ${changed}`);
-    if (changed === 0) throw new Error('click did not change the frame');
+    let hovered = await page.evaluate(() => Array.from(window.uvl.snapshot()));
+    if (!process.env.UVL_STATIC) {
+      const before = hovered;
+      const target = await page.evaluate(() => window.uvl.targetCenter(0));
+      if (!target) throw new Error('no tap target');
+      const box = await page.locator('#app').boundingBox();
+      const frames = await page.evaluate(() => window.uvl.state.frames);
+      const t0 = Date.now();
+      await page.mouse.click(box.x + target[0], box.y + target[1]);
+      await page.mouse.move(box.x + 2, box.y + 2); // leave the button so hover does not differ
+      await page.waitForFunction((f) => window.uvl.state.frames > f, frames, { timeout: 10000 });
+      await page.waitForTimeout(200);
+      console.log(`click → new frame in ${Date.now() - t0} ms`);
+      const after = await page.evaluate(() => Array.from(window.uvl.snapshot()));
+      const changed = diff(before, after);
+      console.log(`changed bytes after click: ${changed}`);
+      if (changed === 0) throw new Error('click did not change the frame');
 
-    // hovering another button must only repaint (and upload) a small window
-    const other = await page.evaluate(() => window.uvl.targetCenter(1));
-    const f2 = await page.evaluate(() => window.uvl.state.frames);
-    await page.mouse.move(box.x + other[0], box.y + other[1]);
-    await page.waitForFunction((f) => window.uvl.state.frames > f, f2, { timeout: 10000 });
-    await page.waitForTimeout(200);
-    const hover = await page.evaluate(() => [window.uvl.state.damaged, window.uvl.canvas.width * window.uvl.canvas.height]);
-    console.log(`hover repainted ${hover[0]} of ${hover[1]} px`);
-    if (!(hover[0] > 0 && hover[0] * 10 < hover[1])) throw new Error('hover was not a partial redraw');
-    const hovered = await page.evaluate(() => Array.from(window.uvl.snapshot()));
-
-    if (backend === 'webgpu') {
-      // headless Chromium does not composite WebGPU canvases into screenshots,
-      // so compare what the GPU drew with the frame Lean produced instead
-      const gpu = await page.evaluate(async () => Array.from(await window.uvl.gpuReadback()));
-      let maxErr = 0;
-      for (let i = 0; i < gpu.length; i++) if (i % 4 !== 3) maxErr = Math.max(maxErr, Math.abs(gpu[i] - hovered[i]));
-      console.log(`WebGPU readback vs Lean frame: max channel error ${maxErr}`);
-      if (gpu.length !== hovered.length || maxErr > 2) throw new Error('WebGPU output differs from the frame');
+      // hovering another button must only repaint (and upload) a small window
+      // (CPU backends; the GPU backend redraws the scene)
+      const other = await page.evaluate(() => window.uvl.targetCenter(1));
+      const f2 = await page.evaluate(() => window.uvl.state.frames);
+      await page.mouse.move(box.x + other[0], box.y + other[1]);
+      await page.waitForFunction((f) => window.uvl.state.frames > f, f2, { timeout: 10000 });
+      await page.waitForTimeout(200);
+      const hover = await page.evaluate(() => [window.uvl.state.damaged, window.uvl.canvas.width * window.uvl.canvas.height]);
+      if (backend !== 'gpu') console.log(`hover repainted ${hover[0]} of ${hover[1]} px`);
+      if (backend !== 'gpu' && !(hover[0] > 0 && hover[0] * 10 < hover[1])) throw new Error('hover was not a partial redraw');
+      hovered = await page.evaluate(() => Array.from(window.uvl.snapshot()));
     }
+
+    if (backend === 'webgpu' || backend === 'gpu') {
+      // headless Chromium does not composite WebGPU canvases into screenshots,
+      // so compare what the GPU drew with the frame the CPU rasterizer produces
+      const gpu = await page.evaluate(async () => Array.from(await window.uvl.gpuReadback()));
+      let maxErr = 0, over = 0;
+      for (let i = 0; i < gpu.length; i++) {
+        if (i % 4 === 3) continue;
+        const e = Math.abs(gpu[i] - hovered[i]);
+        maxErr = Math.max(maxErr, e);
+        if (e > 2) over++;
+      }
+      const info = await page.evaluate(() => window.uvl.state);
+      console.log(`${backend} readback vs CPU frame: max channel error ${maxErr}, ${over} channels off by more than 2` +
+        (backend === 'gpu' ? ` (${info.prims} primitives, ${info.leanMs.toFixed(2)} ms in Lean)` : ''));
+      if (gpu.length !== hovered.length) throw new Error('readback size differs');
+      // the CPU presenter must be exact; the GPU renderer differs only by f32 rounding
+      if (backend === 'webgpu' ? maxErr > 2 : over * 1000 > gpu.length) throw new Error('GPU output differs from the CPU frame');
+    }
+    const cost = await page.evaluate(() => window.uvl.measure(30));
+    console.log(`complete frame (${backend}): ${cost.leanMs.toFixed(2)} ms in Lean, ${cost.frameMs.toFixed(2)} ms until drawn`);
     await page.locator('#app').screenshot({ path: shot });
     console.log(`screenshot: ${shot}`);
   } catch (e) {

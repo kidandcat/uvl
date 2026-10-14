@@ -3,6 +3,7 @@ import Examples.Counter
 import Tests.PngDecode
 import Tests.Tile
 import Tests.Damage
+import Tests.GPU
 
 /-!
 Test driver (`lake test`).
@@ -148,5 +149,7 @@ def main (args : List String) : IO UInt32 := do
   ok := (← Tests.Tile.run) && ok
   IO.println "partial redraw:"
   ok := (← Tests.Damage.run) && ok
+  IO.println "GPU pipeline (interpreted):"
+  ok := (← Tests.GPU.run) && ok
   IO.println (if ok then "ALL TESTS PASSED" else "SOME TESTS FAILED")
   return if ok then 0 else 1

@@ -48,3 +48,18 @@ def main (args : List String) : IO Unit := do
     area := area + rt.damage.foldl (· + ·.area) 0
   let t1 ← IO.monoNanosNow
   IO.println s!"counter tap, partial redraw: {(t1 - t0).toF / (2 * n).toF / 1e6} ms/frame ({area / n} px repainted)"
+  -- GPU path: what the CPU still does per frame (view → ops → primitives)
+  let rtd ← opaqueId (Runtime.start Examples.Counter.app w h)
+  let t0 ← IO.monoNanosNow
+  let mut cnt := 0
+  for _ in [0:n] do
+    let rtd ← opaqueId rtd
+    cnt := cnt + (GPU.Batch.build w h rtd.ops).count
+  let t1 ← IO.monoNanosNow
+  IO.println s!"counter, GPU lowering: {(t1 - t0).toF / n.toF / 1e6} ms/frame ({cnt / n} primitives)"
+  let t0 ← IO.monoNanosNow
+  for _ in [0:n] do
+    let ops ← opaqueId (Layout.Widget.toOps Examples.dashboard (← opaqueId w) h)
+    cnt := cnt + (GPU.Batch.build w h ops).count
+  let t1 ← IO.monoNanosNow
+  IO.println s!"dashboard, layout + GPU lowering: {(t1 - t0).toF / n.toF / 1e6} ms/frame"

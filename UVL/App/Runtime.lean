@@ -118,6 +118,9 @@ def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
 def pointerState (rt : Runtime Model Msg) : PointerState :=
   { pos := rt.pointer, pressed := rt.pressed.isSome && sameTarget rt.pressed rt.hovered }
 
+/-- The current view as render ops. -/
+def ops (rt : Runtime Model Msg) : Array RenderOp := rt.tree.2.toOps 0 0 rt.pointerState
+
 /-- Render the current frame as RGBA8 bytes (`width * height * 4`). -/
 def frame (rt : Runtime Model Msg) : ByteArray :=
   (Raster.render rt.width rt.height (rt.tree.2.toOps 0 0 rt.pointerState) rt.app.background).data
@@ -126,7 +129,7 @@ def frame (rt : Runtime Model Msg) : ByteArray :=
 changed since the last `present` are rasterized (see `Render/Damage.lean`).
 Clears `dirty`; the pixels are then `pixels` and the changed windows `damage`. -/
 def present (rt : Runtime Model Msg) : Runtime Model Msg :=
-  let ops := rt.tree.2.toOps 0 0 rt.pointerState
+  let ops := rt.ops
   let w := rt.width; let h := rt.height; let bg := rt.app.background
   -- take the cached frame out first so its pixels are updated in place
   let prev := rt.presented

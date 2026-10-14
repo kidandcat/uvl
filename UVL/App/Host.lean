@@ -1,4 +1,5 @@
 import UVL.App.Runtime
+import UVL.GPU.Batch
 
 /-!
 # Host interface
@@ -138,6 +139,21 @@ def damage (r : AnyRuntime) : FloatArray :=
   r.rt.damage.foldl (init := .empty) fun a d =>
     a.push d.x.toF |>.push d.y.toF |>.push d.w.toF |>.push d.h.toF
 
+/-- The current frame lowered to GPU primitives (see `GPU/Batch.lean`). -/
+@[export uvl_host_gpu_batch]
+def gpuBatch (r : AnyRuntime) : GPU.Batch := GPU.Batch.build r.rt.width r.rt.height r.rt.ops
+
+/-- Background color as `r, g, b, a` in `[0, 1]`. -/
+@[export uvl_host_background]
+def background (r : AnyRuntime) : FloatArray :=
+  let c := r.rt.app.background
+  FloatArray.empty.push c.r |>.push c.g |>.push c.b |>.push c.a
+
+/-- Forget the presented frame and request a complete new one (after the shell
+switches between GPU and CPU rendering). -/
+@[export uvl_host_invalidate]
+def invalidate (r : AnyRuntime) : AnyRuntime := ⟨{ r.rt with dirty := true, presented := none }⟩
+
 @[export uvl_host_mark_clean]
 def markClean (r : AnyRuntime) : AnyRuntime := ⟨{ r.rt with dirty := false }⟩
 
@@ -149,5 +165,16 @@ def targetCenter (r : AnyRuntime) (i : UInt32) : FloatArray :=
   | none => .empty
 
 end AnyRuntime
+
+namespace GPU.Batch
+
+@[export uvl_gpu_batch_prims] def primsOf (b : Batch) : FloatArray := b.prims
+@[export uvl_gpu_batch_data] def dataOf (b : Batch) : FloatArray := b.data
+@[export uvl_gpu_batch_count] def countOf (b : Batch) : UInt32 := b.count.toUInt32
+
+end GPU.Batch
+
+/-- WGSL source of the GPU renderer (`GPU/Kernels.lean`). -/
+@[export uvl_gpu_shader] def gpuShader (_ : Unit) : String := GPU.shaderSource
 
 end UVL
