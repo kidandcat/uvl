@@ -63,4 +63,19 @@ def dashboard : UI.Widget Unit := ui! pad 20:
             button "Export" (size := 1)
           expanded: lineChart [[3, 5, 4, 8, 7, 11, 10, 14], [1, 2, 4, 3, 6, 5, 8, 9]]
 
+open UI in
+/-- TrueType text (the bundled UVL Sans) at several sizes, with kerning,
+accents and a wrapped paragraph. -/
+def typography : UI.Widget Unit :=
+  pad 16 <| card (padding := 20) <| col (gap := 6) [
+    label "Typography in pure Lean" (size := 28) (color := Color.hex 0x0D47A1),
+    label "AVA Today, Wave · ¡Olé! àéîõü ñ ç ß" (size := 18),
+    row (gap := 12) [label "12 px" (size := 12), label "14 px" (size := 14),
+      label "16 px" (size := 16), label "20 px" (size := 20)],
+    paragraph ("TrueType outlines are parsed from an embedded font, laid out with " ++
+      "advances and pair kerning, wrapped at spaces, and drawn as ordinary path fills, " ++
+      "so the CPU rasterizer and the GPU kernels share one code path.") 380 (size := 14)
+      (color := Color.hex 0x37474F)
+  ]
+
 end Examples

@@ -4,6 +4,7 @@ import Tests.PngDecode
 import Tests.Tile
 import Tests.Damage
 import Tests.GPU
+import Tests.Text
 
 /-!
 Test driver (`lake test`).
@@ -41,7 +42,9 @@ def goldens : List Golden := [
   ⟨"hello", 320, 160, fun _ => Image.toPNG (UI.render Examples.hello 320 160 (Color.hex 0xECEFF1))⟩,
   ⟨"dashboard", 800, 600, fun _ =>
     Image.toPNG (UI.render Examples.dashboard 800 600 (Color.hex 0xF5F7FA))⟩,
-  ⟨"counter", 480, 360, fun _ => counterAfterClicks.framePNG⟩
+  ⟨"counter", 480, 360, fun _ => counterAfterClicks.framePNG⟩,
+  ⟨"typography", 460, 280, fun _ =>
+    Image.toPNG (UI.render Examples.typography 460 280 (Color.hex 0xECEFF1))⟩
 ]
 
 /-- Max channel difference allowed, and fraction of bytes allowed to differ. -/
@@ -149,6 +152,8 @@ def main (args : List String) : IO UInt32 := do
   ok := (← Tests.Tile.run) && ok
   IO.println "partial redraw:"
   ok := (← Tests.Damage.run) && ok
+  IO.println "TrueType text:"
+  ok := (← Tests.Text.run) && ok
   IO.println "GPU pipeline (interpreted):"
   ok := (← Tests.GPU.run) && ok
   IO.println (if ok then "ALL TESTS PASSED" else "SOME TESTS FAILED")

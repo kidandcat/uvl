@@ -9,7 +9,7 @@ package uvl where
 lean_lib UVL
 
 lean_lib Tests where
-  globs := #[.one `Tests.PngDecode, .one `Tests.Tile, .one `Tests.Damage, .one `Tests.GPU]
+  globs := #[.one `Tests.PngDecode, .one `Tests.Tile, .one `Tests.Damage, .one `Tests.GPU, .one `Tests.Text]
 
 lean_lib Examples where
   globs := #[.one `Examples.Scenes, .one `Examples.Counter, .one `Examples.BareMetalCounter,

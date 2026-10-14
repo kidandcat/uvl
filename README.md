@@ -47,6 +47,24 @@ def main : IO Unit :=
 
 ![hello](Tests/golden/hello.png)
 
+### TrueType text
+
+`label` and `paragraph` draw text with a TrueType font at any pixel size. UVL ships
+**UVL Sans**, a Latin-1 subset of Liberation Sans (SIL Open Font License, see
+[assets/fonts](assets/fonts)), embedded in the library. The parser reads `cmap`, `hmtx`,
+`glyf` (simple and composite glyphs) and `kern` in pure Lean.
+
+```lean
+col [ label "Typography in pure Lean" (size := 28),
+      paragraph "Wrapped at spaces to the given width…" 380 (size := 14) ]
+```
+
+![typography](Tests/golden/typography.png)
+
+Glyph outlines become ordinary path fills, so the CPU rasterizer, damage tracking, tiles
+and the GPU kernels all draw them. `text` keeps the built-in bitmap font, which is what the
+bare-metal targets use.
+
 ### The `ui!` DSL
 
 Indentation-based syntax: each line is `widget args*`, and `:` opens a block of children (or
@@ -221,10 +239,11 @@ def scene : Array RenderOp := #[
 UVL/
   Core/       Color, Vec2/Rect/Affine, fast Float literals, pixel formats
   Render/     FrameBuffer (verified), SDF, Paint, Path, Font, RenderOp, Raster, Tile, Damage
+  Text/       TrueType parser, embedded UVL Sans, shaping, wrapping
   GPU/        typed WGSL DSL, shader kernels, lowering to GPU primitives, reference renderer
   Output/     Deflate/zlib and PNG/PPM in pure Lean
   Layout/     Constraints, Placed (positioned tree), Widget + layout engine
-  UI/         widget API, ui! DSL, charts (bar, line, donut)
+  UI/         widget API, ui! DSL, charts (bar, line, donut), TrueType labels
   App/        Event, App and Runtime (Elm architecture, hit testing), Host (C ABI for shells)
   BareMetal/  app shell for microcontrollers (see baremetal/)
 UVLWindow.lean  SDL3 shell (FFI), only used by the uvl-* window executables
@@ -262,10 +281,10 @@ Tests/        golden images, test PNG decoder, test driver
   *non-zero* or *even-odd* rule, exact horizontal coverage and 4 vertical subsamples.
 * Strokes with round joins and caps; nested affine transforms and clipping.
 * Text with a built-in 5×7 bitmap font (ASCII plus accented letters), rasterized with exact
-  area coverage at any scale. TrueType + MSDF is planned.
+  area coverage at any scale, and TrueType text (see above).
 
 ## Next steps
 
-1. Line-wrapping text, a TrueType parser and an MSDF atlas (rendered by the GPU path too).
+1. An MSDF glyph atlas for large amounts of text (sampled identically on CPU and GPU).
 2. Persistent GPU buffers updated only where the scene changed.
 3. Stateful widgets: text field, scrolling, sliders; animations with `tick`.
