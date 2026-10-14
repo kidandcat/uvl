@@ -12,7 +12,7 @@ lean_lib Tests where
   globs := #[.one `Tests.PngDecode]
 
 lean_lib Examples where
-  globs := #[.one `Examples.Scenes]
+  globs := #[.one `Examples.Scenes, .one `Examples.Counter]
 
 lean_exe «uviz-demo» where
   root := `Examples.Demo
