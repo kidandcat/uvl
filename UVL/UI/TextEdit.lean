@@ -176,6 +176,13 @@ structure TextInput where
   anchor : Option Nat := none
   focused : Bool := false
   scroll : Float := 0
+  /-- Earlier `(text, cursor)` states, most recent first (Ctrl+Z). -/
+  undo : List (String × Nat) := []
+  /-- Undone states (Ctrl+Y / Ctrl+Shift+Z). -/
+  redo : List (String × Nat) := []
+  /-- Kind of the last edit (0: none or a cursor move, 1: typing, 2: deleting
+  characters), so that a run of keystrokes is undone as one step. -/
+  lastEdit : Nat := 0
 deriving Inhabited, Repr
 
 namespace TextInput
@@ -183,6 +190,7 @@ namespace TextInput
 /-- Field-by-field equality (written out: see `Runtime.sameTarget`). -/
 def same (a b : TextInput) : Bool :=
   a.text == b.text && a.cursor == b.cursor && a.focused == b.focused && a.scroll == b.scroll &&
+    a.lastEdit == b.lastEdit &&
     match a.anchor, b.anchor with
     | some x, some y => x == y
     | none, none => true
@@ -245,6 +253,28 @@ def keepVisible (st : TextInput) (lay : TextLayout) (h : Float) : TextInput :=
   let s := if top < s then top else if top + lay.lineHeight > s + h then top + lay.lineHeight - h else s
   { st with scroll := Max.max 0 s }
 
+/-- Most undo steps kept. -/
+def historyLimit : Nat := 100
+
+/-- Go back to the previous state of the undo history (or forward again with
+`redo := true`). -/
+def travel (st : TextInput) (redo : Bool) : TextInput :=
+  match (if redo then st.redo else st.undo) with
+  | (t, c) :: rest =>
+    let here := (st.text, st.cursor)
+    if redo then { st with text := t, cursor := c, anchor := none, redo := rest,
+                           undo := here :: st.undo, lastEdit := 0 }
+    else { st with text := t, cursor := c, anchor := none, undo := rest,
+                   redo := here :: st.redo, lastEdit := 0 }
+  | [] => st
+
+/-- Record the edit from `old` to `st` (of kind `kind`) in the undo history:
+a new step, unless it continues a run of the same kind of keystrokes. -/
+def record (st old : TextInput) (kind : Nat) : TextInput :=
+  if kind != 0 && kind == old.lastEdit then { st with redo := [] }
+  else { st with undo := ((old.text, old.cursor) :: old.undo).take historyLimit, redo := [],
+                 lastEdit := kind }
+
 /-- Apply an input event. `layout` lays out a text (the current one, or the
 edited one); pointer positions are in pixels from the top-left corner of the
 text, scroll included. `viewHeight` is the visible height of the text, used to
@@ -264,6 +294,11 @@ def apply (st : TextInput) (layout : String → TextLayout) (multiline : Bool :=
       let (a, b) := wordAt cs (lay.hit x y)
       { st with anchor := some a, cursor := b }
     | .selectAll => { st with anchor := some 0, cursor := n }
+    | .undo => st.travel false
+    | .redo => st.travel true
+    | .wheel dy =>
+      let maxScroll := Max.max 0 (lay.lines.size.toFloat * lay.lineHeight - viewHeight)
+      if viewHeight ≤ 0 then st else { st with scroll := Max.max 0 (Min.min maxScroll (st.scroll + dy)) }
     | .cut => st.deleteSelection
     | .text s =>
       let ins := (s.toList.map fun ch => if ch == '\r' then '\n' else ch).filter (typeable multiline)
@@ -293,7 +328,21 @@ def apply (st : TextInput) (layout : String → TextLayout) (multiline : Bool :=
       | .left, some (a, _) => { st with cursor := a, anchor := none }
       | .right, some (_, b) => { st with cursor := b, anchor := none }
       | k, _ => if isMove k then st.moveTo (move lay n c k) false else st
-  st'.keepVisible (layout st'.text) viewHeight
+  -- undo history
+  let st' := match ev with
+    | .undo | .redo | .focus | .blur | .wheel _ => st'
+    | _ =>
+      if st'.text != st.text then
+        let kind := match ev, st.selection? with
+          | .text s, none => if s.length == 1 then 1 else 0
+          | .key .backspace, none | .key .delete, none => 2
+          | _, _ => 0
+        st'.record st kind
+      else if st'.cursor != st.cursor then { st' with lastEdit := 0 } else st'
+  match ev with
+  | .wheel _ => st'
+  | _ => st'.keepVisible (layout st'.text) viewHeight
+
 end TextInput
 
 end UVL.UI

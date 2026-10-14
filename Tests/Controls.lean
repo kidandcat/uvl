@@ -196,8 +196,31 @@ def run : IO Bool := do
   ok := (← check "text area: Ctrl+Home scrolls back to the top"
     (a4.model.notes.cursor == 0 && a4.model.notes.scroll == 0)) && ok
   let a5 := a3.simulate [.keyDown .home, .keyDown .shift, .keyDown .up, .keyUp .shift]
+  let w1' := a3.simulate [.pointerMove (ta.x + 40).toF (ta.y + 40).toF, .scroll 0 (-100)]
+  let w2' := w1'.simulate [.scroll 0 15]
+  ok := (← check s!"text area: the wheel scrolls it ({a3.model.notes.scroll} → {w1'.model.notes.scroll} → {w2'.model.notes.scroll})"
+    (w1'.model.notes.scroll == 0 && (w2'.model.notes.scroll - 15).abs < 1.0e-9 &&
+      w2'.model.scroll == 0)) && ok
   ok := (← check s!"text area: Shift+Up selects across lines (\"{a5.model.notes.selectedText}\")"
     (a5.model.notes.selectedText == "five\n")) && ok
+  -- undo / redo
+  let u0 := rt.simulate (Runtime.click fx fy ++ [.textInput "a", .textInput "b", .textInput "c",
+    .keyDown .left, .keyDown .left, .textInput "X", .keyDown .end_, .keyDown .backspace,
+    .keyDown .backspace])
+  let undo := [Event.keyDown .ctrl, .keyDown (.char 'z'), .keyUp .ctrl]
+  let u1 := u0.simulate undo
+  let u2 := u1.simulate undo
+  let u3 := u2.simulate undo
+  let u4 := u3.simulate [.keyDown .ctrl, .keyDown (.char 'y'), .keyUp .ctrl]
+  let u5 := u4.simulate [.keyDown .ctrl, .keyDown .shift, .keyDown (.char 'z'), .keyUp .shift, .keyUp .ctrl]
+  ok := (← check s!"undo: keystroke runs undo as one step (\"{u0.model.name.text}\" ← \"{u1.model.name.text}\" ← \"{u2.model.name.text}\" ← \"{u3.model.name.text}\")"
+    (u0.model.name.text == "aX" && u1.model.name.text == "aXbc" && u2.model.name.text == "abc" &&
+      u3.model.name.text == "")) && ok
+  ok := (← check "undo: Ctrl+Y and Ctrl+Shift+Z redo"
+    (u4.model.name.text == "abc" && u5.model.name.text == "aXbc")) && ok
+  let u6 := u2.simulate [.textInput "!"]
+  ok := (← check "undo: a new edit clears the redo history"
+    (u6.model.name.redo.isEmpty && (u6.simulate undo).model.name.text == "abc")) && ok
   -- scroll view
   let some sv := find rt isScroll | check "scroll target" false
   let (sx, sy) := ((sv.x + 50).toF, (sv.y + 50).toF)

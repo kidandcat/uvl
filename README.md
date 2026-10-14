@@ -197,7 +197,10 @@ delete one, and a double-click selects the word under the pointer.
 `textArea` is the multi-line version ([UI/TextEdit.lean](UVL/UI/TextEdit.lean) holds the
 editing logic both share): text wraps at the width and at Enter, Up/Down keep the horizontal
 position, Home/End go to the ends of the visual line and Ctrl+Home/End to the ends of the
-text, and the contents scroll to keep the cursor in view. Ctrl+C and Ctrl+X put the selection in
+text, and the contents scroll to keep the cursor in view (or with the wheel).
+
+Both keep an undo history: Ctrl+Z undoes, Ctrl+Y or Ctrl+Shift+Z redoes, and a run of typed
+(or deleted) characters is one step. Ctrl+C and Ctrl+X put the selection in
 `Runtime.clipboard`, which shells hand to the system clipboard (the browser's copy event, or
 `SDL_SetClipboardText`); pasted text arrives as one text-input event.
 
@@ -360,6 +363,6 @@ Tests/        golden images, test PNG decoder, test driver
 
 ## Next steps
 
-1. Undo/redo for text editing, and wheel scrolling inside text areas.
+1. Accessibility and IME composition for text input.
 2. Faster CPU sampling of MSDF glyphs (today outlines are about 2.5× faster on the CPU;
    MSDF is the better choice on the GPU).

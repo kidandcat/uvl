@@ -162,6 +162,8 @@ def keyToInput (rt : Runtime Model Msg) (id : String) (k : Key) : Runtime Model 
     | .left | .right | .home | .end_ => rt.sendInput id (.word k rt.shift)
     | .backspace | .delete => rt.sendInput id (.word k false)
     | .char 'a' | .char 'A' => rt.sendInput id .selectAll
+    | .char 'z' | .char 'Z' => rt.sendInput id (if rt.shift then .redo else .undo)
+    | .char 'y' | .char 'Y' => rt.sendInput id .redo
     | .char 'c' | .char 'C' => (rt.copySelection).getD rt
     | .char 'x' | .char 'X' =>
       match rt.copySelection with
@@ -279,6 +281,11 @@ def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
     | .scroll _ dy =>
       match rt.pointer with
       | some (px, py) =>
+        -- an input that scrolls (a text area) takes the wheel first
+        let byInput := match pressIndex rt.targets px py >>= (rt.targets[·]?) with
+          | some { action := .input _ f _, .. } => f (.wheel dy)
+          | _ => none
+        if let some m := byInput then rt.dispatch m else
         match scrollIndex rt.targets px py >>= (rt.targets[·]?) with
         | some { action := .scroll off max f, .. } =>
           let target := Min.min max (toPx (off.toF + dy))

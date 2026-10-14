@@ -65,6 +65,12 @@ inductive InputEvent where
   | word (k : Key) (extend : Bool)
   /-- A second press at about the same place: select the word there. -/
   | doubleClick (x y : Float)
+  /-- Ctrl+Z. -/
+  | undo
+  /-- Ctrl+Y or Ctrl+Shift+Z. -/
+  | redo
+  /-- The wheel turned over the input, in pixels (positive: scroll down). -/
+  | wheel (dy : Float)
   /-- Ctrl+A. -/
   | selectAll
   /-- Ctrl+X: the selection was copied to the clipboard, delete it. -/

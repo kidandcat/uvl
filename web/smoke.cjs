@@ -10,7 +10,7 @@
 // UVL_SIZE=WxH the canvas size, UVL_STATIC=1 skips the interaction steps
 // (for apps without tap targets), and UVL_CONTROLS=1 drives the controls
 // example instead (drag the slider, type in the text field, select, copy and
-// paste, double-click, edit the text area, scroll the list).
+// paste, double-click, edit, undo and scroll the text area, scroll the list).
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -134,6 +134,14 @@ function diff(a, b) {
       const notes = await copy();
       console.log(`text area selection: ${JSON.stringify(notes)}`);
       if (!notes || !notes.endsWith('\nTyped in the browser') || notes.length < 30) throw new Error(`unexpected text area selection ${JSON.stringify(notes)}`);
+      await step('undo with Ctrl+Z', () => page.keyboard.press('Control+z'));
+      await step('add lines to the text area', async () => {
+        for (let i = 1; i <= 6; i++) await page.keyboard.type(`\nline ${i}`);
+      });
+      await step('scroll the text area', async () => {
+        await page.mouse.move(ax, ay);
+        await page.mouse.wheel(0, -200);
+      });
       const [lx, ly] = await at(4); // scroll view
       await step('scroll the list', async () => {
         await page.mouse.move(lx, ly);
