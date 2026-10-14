@@ -66,3 +66,42 @@ jobs:
         with:
           name: desktop-screenshot
           path: counter-window.png
+
+  web:
+    runs-on: ubuntu-latest
+    env:
+      EMSDK_VERSION: 6.0.12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          build: false
+          test: false
+      - name: Install Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+          "$HOME/emsdk/emsdk" install "$EMSDK_VERSION"
+          "$HOME/emsdk/emsdk" activate "$EMSDK_VERSION"
+      - name: Cache the wasm Lean runtime and Init
+        uses: actions/cache@v4
+        with:
+          path: .lake/build/wasm
+          key: wasm-${{ hashFiles('lean-toolchain') }}-${{ env.EMSDK_VERSION }}-${{ hashFiles('web/build.sh') }}
+      - name: Build the browser app
+        run: |
+          source "$HOME/emsdk/emsdk_env.sh"
+          web/build.sh
+      - name: Browser smoke test (headless Chromium, WebGPU on lavapipe + Canvas 2D)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node web/smoke.cjs web/dist web-webgpu.png
+          UVL_BACKEND=canvas2d node web/smoke.cjs web/dist web-counter.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-app
+          path: |
+            web/dist
+            web-counter.png

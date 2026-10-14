@@ -27,21 +27,21 @@ def barChart (data : List (String × Float)) (w : Nat := 320) (h : Nat := 200) :
     let top := r.y + 8
     let base := r.y + r.h - 18
     let m := maxVal (data.map (·.2))
-    let slot := (r.w - 16) / n.toFloat
+    let slot := (r.w - 16) / n.toF
     let mut ops : Array RenderOp :=
       #[RenderOp.line ⟨r.x + 8, base + 0.5⟩ ⟨r.x + r.w - 8, base + 0.5⟩ 1 Color.gray]
     for i in [0:4] do
-      let gy := base - (base - top) * (i + 1).toFloat / 4
+      let gy := base - (base - top) * (i + 1).toF / 4
       ops := ops.push (RenderOp.line ⟨r.x + 8, gy⟩ ⟨r.x + r.w - 8, gy⟩ 1 (Color.gray.withAlpha 0.25))
     let mut i := 0
     for (label, v) in data do
       let bh := (base - top) * v / m
-      let x := r.x + 8 + slot * i.toFloat + slot * 0.15
+      let x := r.x + 8 + slot * i.toF + slot * 0.15
       let bw := slot * 0.7
       let col := palette[i % palette.size]!
       ops := ops.push (.fill (.roundedRect ⟨x, base - bh, bw, bh⟩ ⟨4, 4, 0, 0⟩)
         (.linear ⟨0, base - bh⟩ ⟨0, base⟩ #[(0, col), (1, col.withAlpha 0.6)]))
-      let lw := (Font.widthCells label).toFloat
+      let lw := (Font.widthCells label).toF
       ops := ops.push (.text ⟨x + bw / 2 - lw / 2, base + 6⟩ label 1 Color.darkGray)
       i := i + 1
     return ops
@@ -57,14 +57,14 @@ def lineChart (series : List (List Float)) (w : Nat := 320) (h : Nat := 200) : W
     let base := r.y + r.h - 10
     let mut ops : Array RenderOp := #[]
     for i in [0:5] do
-      let gy := base - (base - top) * i.toFloat / 4
+      let gy := base - (base - top) * i.toF / 4
       ops := ops.push (RenderOp.line ⟨left, gy⟩ ⟨right, gy⟩ 1 (Color.gray.withAlpha 0.3))
     let mut si := 0
     for s in series do
       let n := s.length
       let col := palette[si % palette.size]!
       let pts : Array Vec2 := (s.toArray.mapIdx fun i v =>
-        ⟨left + (right - left) * i.toFloat / (Max.max (n - 1) 1).toFloat, base - (base - top) * v / m⟩)
+        ⟨left + (right - left) * i.toF / (Max.max (n - 1) 1).toF, base - (base - top) * v / m⟩)
       -- area under the curve
       if h : 0 < pts.size then
         let area := pts.push ⟨pts[pts.size - 1]!.x, base⟩ |>.push ⟨pts[0].x, base⟩
@@ -92,10 +92,10 @@ def donutChart (values : List Float) (size : Nat := 160) (thickness : Float := 2
       let a1 := a0 + 2 * 3.14159265358979 * v / total
       let steps := Max.max 2 ((a1 - a0) * 24).ceil.toUInt64.toNat
       let outer := (Array.range (steps + 1)).map fun k =>
-        let a := a0 + (a1 - a0) * k.toFloat / steps.toFloat
+        let a := a0 + (a1 - a0) * k.toF / steps.toF
         Vec2.mk (c.x + ro * Float.cos a) (c.y + ro * Float.sin a)
       let inner := (Array.range (steps + 1)).reverse.map fun k =>
-        let a := a0 + (a1 - a0) * k.toFloat / steps.toFloat
+        let a := a0 + (a1 - a0) * k.toF / steps.toF
         Vec2.mk (c.x + ri * Float.cos a) (c.y + ri * Float.sin a)
       ops := ops.push (RenderOp.path (Path.polygon (outer ++ inner)) palette[i % palette.size]!)
       a0 := a1

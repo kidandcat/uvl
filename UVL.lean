@@ -20,4 +20,5 @@ import UVL.UI.DSL
 import UVL.UI.Charts
 import UVL.App.Event
 import UVL.App.Runtime
+import UVL.App.Host
 import UVL.BareMetal.Shell

@@ -71,6 +71,14 @@ def dispatchIf (rt : Runtime Model Msg) (i : Nat) : Runtime Model Msg :=
   | some t => rt.dispatch t.msg
   | none => rt
 
+/-- Equality of optional target indices. Written out instead of `==` so the
+compiler does not reuse a specialization that lives in the `Lean` package,
+which standalone (WebAssembly) builds do not link. -/
+def sameTarget : Option Nat → Option Nat → Bool
+  | some a, some b => a == b
+  | none, none => true
+  | _, _ => false
+
 @[inline] def toPx (v : Float) : Nat := if v <= 0 then 0 else v.floor.toUInt64.toNat
 
 def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
@@ -79,7 +87,7 @@ def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
       let p := (toPx x, toPx y)
       let hov := hitIndex rt.targets p.1 p.2
       { rt with pointer := some p, hovered := hov,
-                dirty := rt.dirty || hov != rt.hovered || rt.pressed.isSome }
+                dirty := rt.dirty || !sameTarget hov rt.hovered || rt.pressed.isSome }
     | .pointerLeave => { rt with pointer := none, hovered := none, dirty := rt.hovered.isSome }
     | .pointerDown x y .left =>
       let p := (toPx x, toPx y)
@@ -103,7 +111,7 @@ def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
 
 /-- Hover/press state for painting. -/
 def pointerState (rt : Runtime Model Msg) : PointerState :=
-  { pos := rt.pointer, pressed := rt.pressed.isSome && rt.pressed == rt.hovered }
+  { pos := rt.pointer, pressed := rt.pressed.isSome && sameTarget rt.pressed rt.hovered }
 
 /-- Render the current frame as RGBA8 bytes (`width * height * 4`). -/
 def frame (rt : Runtime Model Msg) : ByteArray :=

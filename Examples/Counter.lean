@@ -44,7 +44,7 @@ def view (m : Model) : UI.Widget Msg := ui! pad 24:
             spacer
             button "Reset" (size := 1) (color := Color.gray) (onTap := some Msg.reset)
           expanded:
-            lineChart [m.history.map fun v => (v + 12).toNat.toFloat]
+            lineChart [m.history.map fun v => (v + 12).toNat.toF]
 
 def app : App Model Msg where
   init := {}

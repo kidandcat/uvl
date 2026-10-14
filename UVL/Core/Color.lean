@@ -26,9 +26,9 @@ def rgba (r g b a : Float) : Color := { r, g, b, a }
 
 /-- `Color.hex 0xRRGGBB`. -/
 def hex (v : Nat) (a : Float := 1.0) : Color :=
-  { r := (v / 65536 % 256).toFloat / 255.0
-    g := (v / 256 % 256).toFloat / 255.0
-    b := (v % 256).toFloat / 255.0
+  { r := (v / 65536 % 256).toF / 255.0
+    g := (v / 256 % 256).toF / 255.0
+    b := (v % 256).toF / 255.0
     a }
 
 def withAlpha (c : Color) (a : Float) : Color := { c with a }

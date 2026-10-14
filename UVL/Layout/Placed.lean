@@ -97,14 +97,14 @@ deriving Inhabited
 
 def PointerState.inside (p : PointerState) (r : Rect) : Bool :=
   match p.pos with
-  | some (x, y) => r.contains ⟨x.toFloat + 0.5, y.toFloat + 0.5⟩
+  | some (x, y) => r.contains ⟨x.toF + 0.5, y.toF + 0.5⟩
   | none => false
 
 def Visual.toOps (v : Visual Msg) (r : Rect) : Array RenderOp :=
   match v with
   | .none | .tap .. => #[]
   | .deco d => d.toOps r
-  | .text s scale col => #[.clip r #[.text ⟨r.x, r.y⟩ s scale.toFloat col]]
+  | .text s scale col => #[.clip r #[.text ⟨r.x, r.y⟩ s scale.toF col]]
   | .custom draw => #[.clip r (draw r)]
 
 /-- Feedback drawn *over* a tap target's children when hovered or pressed. -/
@@ -121,7 +121,7 @@ mutual
 /-- Lower a placed tree at absolute offset `(ox, oy)` to render ops. -/
 def Placed.toOps {s : Size} (ox oy : Nat) (p : PointerState) : Placed Msg s → Array RenderOp
   | .node s v kids =>
-    let r : Rect := ⟨ox.toFloat, oy.toFloat, s.w.toFloat, s.h.toFloat⟩
+    let r : Rect := ⟨ox.toF, oy.toF, s.w.toF, s.h.toF⟩
     v.toOps r ++ Kids.toOps ox oy p kids ++ v.overlayOps r p
 
 def Kids.toOps {s : Size} (ox oy : Nat) (p : PointerState) : Kids Msg s → Array RenderOp

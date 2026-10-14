@@ -59,8 +59,8 @@ partial def bounds (m : Affine) : RenderOp → Option Rect
     -- glyphs are drawn axis-aligned at the transformed origin (see `Raster.drawText`)
     let o := m.apply pos
     let sc := scale * m.scaleFactor
-    let n := s.length.toFloat
-    some (Rect.inflate ⟨o.x, o.y, (n * Font.advance.toFloat + 1.0) * sc, 8.0 * sc⟩ 2.0)
+    let n := s.length.toF
+    some (Rect.inflate ⟨o.x, o.y, (n * Font.advance.toF + 1.0) * sc, 8.0 * sc⟩ 2.0)
   | .transform m' ops => boundsAll (m.compose m') ops
   | .clip r ops => (boundsAll m ops).map fun b =>
     -- intersection is contained in both; keep the smaller one cheaply
@@ -87,8 +87,8 @@ def build (ops : Array RenderOp) : TileList :=
   ⟨ops.filterMap fun op => (op.bounds {}).map (·, op)⟩
 
 @[inline] def meets (b : Rect) (x y w h : Nat) : Bool :=
-  b.x < (x + w).toFloat && b.y < (y + h).toFloat &&
-    b.x + b.w > x.toFloat && b.y + b.h > y.toFloat
+  b.x < (x + w).toF && b.y < (y + h).toF &&
+    b.x + b.w > x.toF && b.y + b.h > y.toF
 
 /-- The ops (in paint order) whose bounds meet the window `[x, x+w) × [y, y+h)`. -/
 def select (t : TileList) (x y w h : Nat) : Array RenderOp :=

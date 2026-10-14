@@ -50,7 +50,7 @@ def polyline (pts : Array Vec2) : Path := Id.run do
 def star (c : Vec2) (outer inner : Float) (points : Nat) : Path :=
   let n := 2 * points
   polygon <| (Array.range n).map fun i =>
-    let θ := (i.toFloat / n.toFloat) * 2.0 * 3.14159265358979 - 3.14159265358979 / 2.0
+    let θ := (i.toF / n.toF) * 2.0 * 3.14159265358979 - 3.14159265358979 / 2.0
     let r := if i % 2 == 0 then outer else inner
     ⟨c.x + r * Float.cos θ, c.y + r * Float.sin θ⟩
 
@@ -86,7 +86,7 @@ def flatten (path : Path) (m : Affine) : Array Poly := Id.run do
       let n := segmentsFor ((c - last).length + (p - c).length)
       let p0 := last
       for i in [1:n+1] do
-        let t := i.toFloat / n.toFloat
+        let t := i.toF / n.toF
         let u := 1.0 - t
         cur := cur.push ((u * u) • p0 + (2.0 * u * t) • c + (t * t) • p)
       last := p
@@ -96,7 +96,7 @@ def flatten (path : Path) (m : Affine) : Array Poly := Id.run do
       let n := segmentsFor ((c1 - last).length + (c2 - c1).length + (p - c2).length)
       let p0 := last
       for i in [1:n+1] do
-        let t := i.toFloat / n.toFloat
+        let t := i.toF / n.toF
         let u := 1.0 - t
         cur := cur.push ((u * u * u) • p0 + (3.0 * u * u * t) • c1 + (3.0 * u * t * t) • c2
           + (t * t * t) • p)

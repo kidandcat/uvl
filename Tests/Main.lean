@@ -25,7 +25,7 @@ structure Golden where
 /-- Script of events exercising the counter app. -/
 def clickOn {Model Msg : Type} [BEq Msg] (rt : Runtime Model Msg) (m : Msg) : List Event :=
   match rt.targets.toList.find? (·.msg == m) with
-  | some t => Runtime.click (t.x + t.w / 2).toFloat (t.y + t.h / 2).toFloat
+  | some t => Runtime.click (t.x + t.w / 2).toF (t.y + t.h / 2).toF
   | none => []
 
 def counterAfterClicks : Runtime Examples.Counter.Model Examples.Counter.Msg := Id.run do
@@ -118,7 +118,7 @@ def appTests : IO Bool := do
   -- press on "+" but release outside: no tap
   let rt0 := Runtime.start Examples.Counter.app 480 360
   let ev := match rt0.targets.toList.find? (·.msg == Examples.Counter.Msg.inc) with
-    | some t => [Event.pointerDown (t.x + 2).toFloat (t.y + 2).toFloat .left, .pointerUp 1 1 .left]
+    | some t => [Event.pointerDown (t.x + 2).toF (t.y + 2).toF .left, .pointerUp 1 1 .left]
     | none => []
   let t3 ← check "press then release elsewhere does not dispatch" ((rt0.simulate ev).model.count == 0)
   let t4 ← check "three tap targets found" (rt0.targets.size == 3)

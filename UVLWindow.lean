@@ -21,49 +21,6 @@ namespace UVL.SDL
 /-- Push a synthetic left click into SDL's event queue (for smoke tests). -/
 @[extern "uvl_sdl_push_click"] opaque pushClick (x y : Float) : IO Unit
 
-def keyOf (code : Nat) : Key :=
-  match code with
-  | 0x0D => .enter
-  | 0x1B => .escape
-  | 0x08 => .backspace
-  | 0x09 => .tab
-  | 0x7F => .delete
-  | 0x4000004F => .right
-  | 0x40000050 => .left
-  | 0x40000051 => .down
-  | 0x40000052 => .up
-  | c => if 0x20 ≤ c && c < 0x110000 then .char (Char.ofNat c) else .other c
-
-def buttonOf (b : Float) : MouseButton :=
-  match b.toUInt64.toNat with
-  | 1 => .left
-  | 2 => .middle
-  | 3 => .right
-  | n => .other n
-
-/-- Decode the packed event buffer produced by the C shim. -/
-def decode (raw : FloatArray) : Array Event := Id.run do
-  let mut out := #[]
-  for i in [0:raw.size / 5] do
-    let k := raw[5 * i]!.toUInt64.toNat
-    let a := raw[5 * i + 1]!
-    let b := raw[5 * i + 2]!
-    let c := raw[5 * i + 3]!
-    let ev : Option Event := match k with
-      | 1 => some (.pointerMove a b)
-      | 2 => some (.pointerDown a b (buttonOf c))
-      | 3 => some (.pointerUp a b (buttonOf c))
-      | 4 => some (.scroll a b)
-      | 5 => some (.keyDown (keyOf a.toUInt64.toNat))
-      | 6 => some (.keyUp (keyOf a.toUInt64.toNat))
-      | 7 => some (.textInput (String.singleton (Char.ofNat a.toUInt64.toNat)))
-      | 8 => some (.resize a.toUInt64.toNat b.toUInt64.toNat)
-      | 9 => some .quit
-      | 10 => some .pointerLeave
-      | _ => none
-    if let some e := ev then out := out.push e
-  return out
-
 variable {Model Msg : Type}
 
 /-- Run `app` in a desktop window until it is closed.
@@ -84,12 +41,9 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
     close
   openWindow app.title w.toUInt32 h.toUInt32
   let rec loop (rt : Runtime Model Msg) (last : UInt64) (frames : Nat) : IO Unit := do
-    let evs := decode (← pollRaw)
+    let raw ← pollRaw
     let now ← ticksMs
-    let mut rt := evs.foldl Runtime.handle rt
-    if app.animating rt.model then
-      rt := rt.handle (.tick ((now - last).toNat.toFloat / 1000.0))
-      rt := { rt with dirty := true }
+    let mut rt := rt.step raw (now - last).toNat.toF
     if rt.quit then finish rt; return
     let mut frames := frames
     if rt.dirty then
@@ -99,7 +53,7 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
       if frames == 1 then
         if let some i := clickTarget then
           if let some t := rt.targets[i]? then
-            pushClick (t.x + t.w / 2).toFloat (t.y + t.h / 2).toFloat
+            pushClick (t.x + t.w / 2).toF (t.y + t.h / 2).toF
     if let some m := maxFrames then
       if frames ≥ m then finish rt; return
     if !app.animating rt.model then wait 250 else wait 1

@@ -1,3 +1,4 @@
 /.lake
 /out
 /Tests/out
+web/dist/
