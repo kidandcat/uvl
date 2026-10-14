@@ -1,8 +1,10 @@
 /*
  * Thin SDL3 platform shell for uvl.
  *
- * Opens a window, forwards raw input as a packed float buffer and presents an
- * RGBA8 frame produced by the Lean runtime. No UI logic lives here.
+ * Opens a window and forwards raw input as a packed float buffer. Frames are
+ * drawn by the GPU renderer (native/gpu_shell.c) on a surface made from the
+ * window's native handles, or, without a usable GPU, presented as RGBA8 frames
+ * rasterized by Lean through an SDL renderer. No UI logic lives here.
  *
  * Event encoding (5 doubles per event): [kind, a, b, c, d]
  *   1 move (x, y)        2 down (x, y, button)   3 up (x, y, button)
@@ -11,6 +13,13 @@
  */
 #include <lean/lean.h>
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_metal.h>
+#include <webgpu/webgpu.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* native/gpu_shell.c */
+int uvl_wgpu_init(const WGPUChainedStruct *surface_desc, const char *wgsl, const char *entries);
 
 static SDL_Window *win = NULL;
 static SDL_Renderer *ren = NULL;
@@ -29,12 +38,47 @@ LEAN_EXPORT lean_obj_res uvl_sdl_open(b_lean_obj_arg title, uint32_t w, uint32_t
                                       lean_obj_arg world) {
   (void)world;
   if (!SDL_Init(SDL_INIT_VIDEO)) return io_sdl_error("SDL_Init");
-  if (!SDL_CreateWindowAndRenderer(lean_string_cstr(title), (int)w, (int)h,
-                                   SDL_WINDOW_RESIZABLE, &win, &ren))
-    return io_sdl_error("SDL_CreateWindowAndRenderer");
-  SDL_SetRenderVSync(ren, 1);
+  /* the SDL renderer is only created for CPU frames (see uvl_sdl_present) */
+  win = SDL_CreateWindow(lean_string_cstr(title), (int)w, (int)h, SDL_WINDOW_RESIZABLE);
+  if (!win) return io_sdl_error("SDL_CreateWindow");
   SDL_StartTextInput(win);
   return io_ok();
+}
+
+/* Create the GPU renderer on the window. Returns false (and the shell falls
+ * back to CPU frames) when the platform has no surface support, no GPU is
+ * found, or UVL_RENDERER=cpu. */
+LEAN_EXPORT lean_obj_res uvl_sdl_gpu_init(b_lean_obj_arg wgsl, b_lean_obj_arg entries,
+                                          lean_obj_arg world) {
+  (void)world;
+  const char *force = getenv("UVL_RENDERER");
+  if (!win || (force && strcmp(force, "cpu") == 0)) return lean_io_result_mk_ok(lean_box(0));
+  SDL_PropertiesID props = SDL_GetWindowProperties(win);
+  const char *driver = SDL_GetCurrentVideoDriver();
+  const WGPUChainedStruct *chain = NULL;
+  WGPUSurfaceSourceXlibWindow xlib = {.chain = {.sType = WGPUSType_SurfaceSourceXlibWindow}};
+  WGPUSurfaceSourceWaylandSurface wl = {.chain = {.sType = WGPUSType_SurfaceSourceWaylandSurface}};
+  WGPUSurfaceSourceMetalLayer metal = {.chain = {.sType = WGPUSType_SurfaceSourceMetalLayer}};
+  WGPUSurfaceSourceWindowsHWND hwnd = {.chain = {.sType = WGPUSType_SurfaceSourceWindowsHWND}};
+  if (driver && strcmp(driver, "x11") == 0) {
+    xlib.display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, NULL);
+    xlib.window = (uint64_t)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+    if (xlib.display && xlib.window) chain = &xlib.chain;
+  } else if (driver && strcmp(driver, "wayland") == 0) {
+    wl.display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL);
+    wl.surface = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, NULL);
+    if (wl.display && wl.surface) chain = &wl.chain;
+  } else if (driver && strcmp(driver, "cocoa") == 0) {
+    SDL_MetalView view = SDL_Metal_CreateView(win);
+    metal.layer = view ? SDL_Metal_GetLayer(view) : NULL;
+    if (metal.layer) chain = &metal.chain;
+  } else if (driver && strcmp(driver, "windows") == 0) {
+    hwnd.hwnd = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+    hwnd.hinstance = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER, NULL);
+    if (hwnd.hwnd) chain = &hwnd.chain;
+  }
+  int ok = chain && uvl_wgpu_init(chain, lean_string_cstr(wgsl), lean_string_cstr(entries));
+  return lean_io_result_mk_ok(lean_box(ok ? 1 : 0));
 }
 
 static lean_obj_res push(lean_obj_res arr, double k, double a, double b, double c) {
@@ -99,7 +143,12 @@ LEAN_EXPORT lean_obj_res uvl_sdl_poll(lean_obj_arg world) {
 LEAN_EXPORT lean_obj_res uvl_sdl_present(b_lean_obj_arg rgba, uint32_t w, uint32_t h,
                                          lean_obj_arg world) {
   (void)world;
-  if (!ren) return io_sdl_error("present before open");
+  if (!win) return io_sdl_error("present before open");
+  if (!ren) {
+    ren = SDL_CreateRenderer(win, NULL);
+    if (!ren) return io_sdl_error("SDL_CreateRenderer");
+    SDL_SetRenderVSync(ren, 1);
+  }
   if (lean_sarray_size(rgba) < (size_t)w * h * 4) return io_sdl_error("frame too small");
   if (!tex || tex_w != (int)w || tex_h != (int)h) {
     if (tex) SDL_DestroyTexture(tex);

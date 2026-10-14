@@ -1,0 +1,357 @@
+/*
+ * Desktop GPU renderer for uvl, on wgpu-native (webgpu.h).
+ *
+ * The same thing the browser's GPURenderer does (web/uvl-web.js): compile the
+ * WGSL that Lean generates (UVL/GPU/Kernels.lean), upload the primitives Lean
+ * lowered the scene to (UVL/GPU/Batch.lean) and draw them, one pipeline per
+ * primitive kind. No rendering logic lives here.
+ *
+ * It renders either to a window surface (created by the SDL shell from the
+ * window's native handles, see uvl_sdl_gpu_init in sdl_shell.c) or, headless,
+ * to an offscreen texture that can be read back (tests).
+ */
+#include <lean/lean.h>
+#include <webgpu/webgpu.h>
+#include <webgpu/wgpu.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define PRIM_STRIDE 36 /* floats per primitive (UVL/GPU/Kernels.lean) */
+#define MAX_KINDS 16
+
+static WGPUInstance instance;
+static WGPUAdapter adapter;
+static WGPUDevice device;
+static WGPUQueue queue;
+static WGPUSurface surface;
+static WGPUTextureFormat format = WGPUTextureFormat_RGBA8Unorm;
+static WGPUBindGroupLayout bgl;
+static WGPURenderPipeline pipelines[MAX_KINDS];
+static int nkinds;
+static WGPUBuffer prims_buf, data_buf, screen_buf;
+static uint64_t prims_cap, data_cap;
+static WGPUBindGroup bind_group;
+static uint32_t surf_w, surf_h;
+static float *scratch;
+static size_t scratch_cap;
+static char last_error[512];
+
+static WGPUStringView sv(const char *s) { return (WGPUStringView){s, WGPU_STRLEN}; }
+
+static void on_error(WGPUDevice const *d, WGPUErrorType type, WGPUStringView msg, void *u1, void *u2) {
+  (void)d; (void)u1; (void)u2;
+  snprintf(last_error, sizeof last_error, "WebGPU error %d: %.*s", (int)type, (int)msg.length, msg.data);
+  fprintf(stderr, "%s\n", last_error);
+}
+
+static void on_adapter(WGPURequestAdapterStatus st, WGPUAdapter a, WGPUStringView msg, void *u1, void *u2) {
+  *(int *)u2 = 1;
+  if (st == WGPURequestAdapterStatus_Success) *(WGPUAdapter *)u1 = a;
+  else fprintf(stderr, "uvl: no GPU adapter: %.*s\n", (int)msg.length, msg.data);
+}
+
+static void on_device(WGPURequestDeviceStatus st, WGPUDevice d, WGPUStringView msg, void *u1, void *u2) {
+  *(int *)u2 = 1;
+  if (st == WGPURequestDeviceStatus_Success) *(WGPUDevice *)u1 = d;
+  else fprintf(stderr, "uvl: no GPU device: %.*s\n", (int)msg.length, msg.data);
+}
+
+/* Split a comma-separated list in place. */
+static int split(char *s, char **out, int max) {
+  int n = 0;
+  while (*s && n < max) {
+    out[n++] = s;
+    char *c = strchr(s, ',');
+    if (!c) break;
+    *c = 0;
+    s = c + 1;
+  }
+  return n;
+}
+
+static int create_pipelines(const char *wgsl, const char *entries) {
+  WGPUShaderSourceWGSL src = {.chain = {.sType = WGPUSType_ShaderSourceWGSL}, .code = sv(wgsl)};
+  WGPUShaderModuleDescriptor smd = {.nextInChain = &src.chain};
+  WGPUShaderModule module = wgpuDeviceCreateShaderModule(device, &smd);
+  if (!module) return 0;
+
+  WGPUShaderStage vis = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+  WGPUBindGroupLayoutEntry e[3] = {
+    {.binding = 0, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_ReadOnlyStorage}},
+    {.binding = 1, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_ReadOnlyStorage}},
+    {.binding = 2, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_Uniform}},
+  };
+  WGPUBindGroupLayoutDescriptor bgld = {.entryCount = 3, .entries = e};
+  bgl = wgpuDeviceCreateBindGroupLayout(device, &bgld);
+  WGPUPipelineLayoutDescriptor pld = {.bindGroupLayoutCount = 1, .bindGroupLayouts = &bgl};
+  WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(device, &pld);
+
+  /* straight alpha over the frame, like FrameBuffer.blend */
+  WGPUBlendState blend = {
+    .color = {.operation = WGPUBlendOperation_Add, .srcFactor = WGPUBlendFactor_SrcAlpha,
+              .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha},
+    .alpha = {.operation = WGPUBlendOperation_Add, .srcFactor = WGPUBlendFactor_One,
+              .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha},
+  };
+  WGPUColorTargetState target = {.format = format, .blend = &blend, .writeMask = WGPUColorWriteMask_All};
+  char *names = strdup(entries), *list[MAX_KINDS];
+  nkinds = split(names, list, MAX_KINDS);
+  last_error[0] = 0;
+  for (int k = 0; k < nkinds; k++) {
+    WGPUFragmentState fs = {.module = module, .entryPoint = sv(list[k]), .targetCount = 1, .targets = &target};
+    WGPURenderPipelineDescriptor rpd = {
+      .layout = layout,
+      .vertex = {.module = module, .entryPoint = sv("vs")},
+      .primitive = {.topology = WGPUPrimitiveTopology_TriangleList},
+      .multisample = {.count = 1, .mask = ~0u},
+      .fragment = &fs,
+    };
+    pipelines[k] = wgpuDeviceCreateRenderPipeline(device, &rpd);
+  }
+  free(names);
+  wgpuShaderModuleRelease(module);
+  wgpuPipelineLayoutRelease(layout);
+  wgpuDevicePoll(device, 1, NULL);
+  return last_error[0] == 0;
+}
+
+static int init_device(void) {
+  int done = 0;
+  WGPURequestAdapterOptions ao = {.compatibleSurface = surface,
+                                  .powerPreference = WGPUPowerPreference_HighPerformance};
+  wgpuInstanceRequestAdapter(instance, &ao,
+    (WGPURequestAdapterCallbackInfo){.mode = WGPUCallbackMode_AllowProcessEvents,
+                                     .callback = on_adapter, .userdata1 = &adapter, .userdata2 = &done});
+  while (!done) wgpuInstanceProcessEvents(instance);
+  if (!adapter) return 0;
+  done = 0;
+  WGPUDeviceDescriptor dd = {
+    .uncapturedErrorCallbackInfo = {.callback = on_error},
+  };
+  wgpuAdapterRequestDevice(adapter, &dd,
+    (WGPURequestDeviceCallbackInfo){.mode = WGPUCallbackMode_AllowProcessEvents,
+                                    .callback = on_device, .userdata1 = &device, .userdata2 = &done});
+  while (!done) wgpuInstanceProcessEvents(instance);
+  if (!device) return 0;
+  queue = wgpuDeviceGetQueue(device);
+  WGPUBufferDescriptor bd = {.size = 16, .usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst};
+  screen_buf = wgpuDeviceCreateBuffer(device, &bd);
+  return 1;
+}
+
+/* Set up instance, adapter, device and pipelines. `surface_desc` chains the
+ * native window handles, or is NULL for headless rendering. */
+int uvl_wgpu_init(const WGPUChainedStruct *surface_desc, const char *wgsl, const char *entries) {
+  instance = wgpuCreateInstance(NULL);
+  if (!instance) return 0;
+  if (surface_desc) {
+    WGPUSurfaceDescriptor sd = {.nextInChain = surface_desc};
+    surface = wgpuInstanceCreateSurface(instance, &sd);
+    if (!surface) return 0;
+  }
+  if (!init_device()) return 0;
+  if (surface) {
+    WGPUSurfaceCapabilities caps = {0};
+    wgpuSurfaceGetCapabilities(surface, adapter, &caps);
+    if (caps.formatCount == 0) return 0;
+    format = caps.formats[0];
+    for (size_t i = 0; i < caps.formatCount; i++) /* prefer non-sRGB, as on the web */
+      if (caps.formats[i] == WGPUTextureFormat_BGRA8Unorm || caps.formats[i] == WGPUTextureFormat_RGBA8Unorm) {
+        format = caps.formats[i];
+        break;
+      }
+    wgpuSurfaceCapabilitiesFreeMembers(caps);
+  }
+  return create_pipelines(wgsl, entries);
+}
+
+static void configure(uint32_t w, uint32_t h) {
+  if (!surface || (w == surf_w && h == surf_h)) return;
+  WGPUSurfaceConfiguration c = {
+    .device = device, .format = format, .usage = WGPUTextureUsage_RenderAttachment,
+    .width = w, .height = h, .alphaMode = WGPUCompositeAlphaMode_Auto,
+    .presentMode = WGPUPresentMode_Fifo,
+  };
+  wgpuSurfaceConfigure(surface, &c);
+  surf_w = w;
+  surf_h = h;
+}
+
+/* A storage buffer of at least `bytes`; rebuilds the bind group when it grows. */
+static void ensure(WGPUBuffer *buf, uint64_t *cap, uint64_t bytes) {
+  bytes = bytes < 16 ? 16 : (bytes + 15) / 16 * 16;
+  if (*buf && *cap >= bytes) return;
+  if (*buf) wgpuBufferRelease(*buf);
+  if (bytes < *cap * 2) bytes = *cap * 2;
+  WGPUBufferDescriptor bd = {.size = bytes, .usage = WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst};
+  *buf = wgpuDeviceCreateBuffer(device, &bd);
+  *cap = bytes;
+  if (bind_group) wgpuBindGroupRelease(bind_group);
+  bind_group = NULL;
+}
+
+static void upload(WGPUBuffer buf, b_lean_obj_arg arr) {
+  size_t n = lean_sarray_size(arr);
+  if (!n) return;
+  if (n > scratch_cap) {
+    free(scratch);
+    scratch_cap = n + n / 2;
+    scratch = malloc(sizeof(float) * scratch_cap);
+  }
+  const double *src = lean_float_array_cptr(arr);
+  for (size_t i = 0; i < n; i++) scratch[i] = (float)src[i];
+  wgpuQueueWriteBuffer(queue, buf, 0, scratch, sizeof(float) * n);
+}
+
+static void on_mapped(WGPUMapAsyncStatus st, WGPUStringView msg, void *u1, void *u2) {
+  (void)msg; (void)u2;
+  *(int *)u1 = st == WGPUMapAsyncStatus_Success ? 1 : -1;
+}
+
+/* Draw the primitives onto `target`, then optionally copy it into `readback`. */
+static void draw(WGPUTexture target, b_lean_obj_arg prims, uint32_t count, uint32_t w, uint32_t h,
+                 b_lean_obj_arg bg, WGPUBuffer readback, uint32_t stride) {
+  ensure(&prims_buf, &prims_cap, sizeof(float) * lean_sarray_size(prims));
+  if (!bind_group) {
+    WGPUBindGroupEntry e[3] = {
+      {.binding = 0, .buffer = prims_buf, .size = prims_cap},
+      {.binding = 1, .buffer = data_buf, .size = data_cap},
+      {.binding = 2, .buffer = screen_buf, .size = 16},
+    };
+    WGPUBindGroupDescriptor bgd = {.layout = bgl, .entryCount = 3, .entries = e};
+    bind_group = wgpuDeviceCreateBindGroup(device, &bgd);
+  }
+  upload(prims_buf, prims);
+  float screen[4] = {(float)w, (float)h, 0, 0};
+  wgpuQueueWriteBuffer(queue, screen_buf, 0, screen, sizeof screen);
+
+  const double *c = lean_float_array_cptr(bg);
+  WGPUTextureView view = wgpuTextureCreateView(target, NULL);
+  WGPURenderPassColorAttachment ca = {
+    .view = view, .depthSlice = WGPU_DEPTH_SLICE_UNDEFINED,
+    .loadOp = WGPULoadOp_Clear, .storeOp = WGPUStoreOp_Store,
+    .clearValue = {c[0], c[1], c[2], 1.0},
+  };
+  WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(device, NULL);
+  WGPURenderPassDescriptor rpd = {.colorAttachmentCount = 1, .colorAttachments = &ca};
+  WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(enc, &rpd);
+  wgpuRenderPassEncoderSetBindGroup(pass, 0, bind_group, 0, NULL);
+  /* consecutive primitives of the same kind share a draw call (paint order is kept) */
+  const double *p = lean_float_array_cptr(prims);
+  for (uint32_t i = 0; i < count;) {
+    int kind = (int)p[(size_t)i * PRIM_STRIDE];
+    uint32_t j = i + 1;
+    while (j < count && (int)p[(size_t)j * PRIM_STRIDE] == kind) j++;
+    if (kind >= 0 && kind < nkinds) {
+      wgpuRenderPassEncoderSetPipeline(pass, pipelines[kind]);
+      wgpuRenderPassEncoderDraw(pass, 6, j - i, 0, i);
+    }
+    i = j;
+  }
+  wgpuRenderPassEncoderEnd(pass);
+  wgpuRenderPassEncoderRelease(pass);
+  if (readback) {
+    WGPUTexelCopyTextureInfo src = {.texture = target};
+    WGPUTexelCopyBufferInfo dst = {.buffer = readback, .layout = {.bytesPerRow = stride, .rowsPerImage = h}};
+    WGPUExtent3D size = {w, h, 1};
+    wgpuCommandEncoderCopyTextureToBuffer(enc, &src, &dst, &size);
+  }
+  WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, NULL);
+  wgpuQueueSubmit(queue, 1, &cmd);
+  wgpuCommandBufferRelease(cmd);
+  wgpuCommandEncoderRelease(enc);
+  wgpuTextureViewRelease(view);
+}
+
+static lean_obj_res io_error(const char *what) {
+  return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string(what)));
+}
+
+/* Lean: `GPU.draw prims data count w h bg readback : IO ByteArray`. Draws a
+ * frame to the window surface (presenting it), or offscreen when headless.
+ * With `readback` (or headless), returns the frame as tightly packed RGBA. */
+LEAN_EXPORT lean_obj_res uvl_gpu_draw(b_lean_obj_arg prims, b_lean_obj_arg data, uint32_t count,
+                                      uint32_t w, uint32_t h, b_lean_obj_arg bg, uint8_t want,
+                                      lean_obj_arg world) {
+  (void)world;
+  if (!device) return io_error("uvl: GPU not initialized");
+  if (w == 0 || h == 0) return lean_io_result_mk_ok(lean_alloc_sarray(1, 0, 0));
+  ensure(&data_buf, &data_cap, sizeof(float) * lean_sarray_size(data));
+  upload(data_buf, data);
+
+  WGPUTexture target = NULL, offscreen = NULL;
+  if (surface && !want) {
+    configure(w, h);
+    WGPUSurfaceTexture st;
+    wgpuSurfaceGetCurrentTexture(surface, &st);
+    if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
+        st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
+      surf_w = surf_h = 0; /* reconfigure next time */
+      return lean_io_result_mk_ok(lean_alloc_sarray(1, 0, 0));
+    }
+    draw(st.texture, prims, count, w, h, bg, NULL, 0);
+    wgpuSurfacePresent(surface);
+    wgpuTextureRelease(st.texture);
+    return lean_io_result_mk_ok(lean_alloc_sarray(1, 0, 0));
+  }
+
+  /* offscreen: render into a texture of the pipelines' format and read it back */
+  WGPUTextureDescriptor td = {
+    .usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc,
+    .dimension = WGPUTextureDimension_2D, .size = {w, h, 1}, .format = format,
+    .mipLevelCount = 1, .sampleCount = 1,
+  };
+  offscreen = wgpuDeviceCreateTexture(device, &td);
+  target = offscreen;
+  uint32_t stride = (w * 4 + 255) / 256 * 256;
+  WGPUBufferDescriptor bd = {.size = (uint64_t)stride * h,
+                             .usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead};
+  WGPUBuffer rb = wgpuDeviceCreateBuffer(device, &bd);
+  draw(target, prims, count, w, h, bg, rb, stride);
+  int done = 0;
+  wgpuBufferMapAsync(rb, WGPUMapMode_Read, 0, bd.size,
+    (WGPUBufferMapCallbackInfo){.mode = WGPUCallbackMode_AllowProcessEvents,
+                                .callback = on_mapped, .userdata1 = &done});
+  while (!done) {
+    wgpuDevicePoll(device, 1, NULL);
+    wgpuInstanceProcessEvents(instance);
+  }
+  lean_object *out = lean_alloc_sarray(1, (size_t)w * h * 4, (size_t)w * h * 4);
+  if (done > 0) {
+    const uint8_t *src = wgpuBufferGetConstMappedRange(rb, 0, bd.size);
+    uint8_t *o = lean_sarray_cptr(out);
+    int bgra = format == WGPUTextureFormat_BGRA8Unorm || format == WGPUTextureFormat_BGRA8UnormSrgb;
+    for (uint32_t y = 0; y < h; y++)
+      for (uint32_t x = 0; x < w; x++) {
+        const uint8_t *s = src + (size_t)y * stride + x * 4;
+        uint8_t *d = o + ((size_t)y * w + x) * 4;
+        d[0] = s[bgra ? 2 : 0]; d[1] = s[1]; d[2] = s[bgra ? 0 : 2]; d[3] = s[3];
+      }
+    wgpuBufferUnmap(rb);
+  }
+  wgpuBufferRelease(rb);
+  wgpuTextureRelease(offscreen);
+  return lean_io_result_mk_ok(out);
+}
+
+/* Lean: `GPU.initHeadless wgsl entries : IO Bool` (no window, offscreen only). */
+LEAN_EXPORT lean_obj_res uvl_gpu_init_headless(b_lean_obj_arg wgsl, b_lean_obj_arg entries,
+                                               lean_obj_arg world) {
+  (void)world;
+  int ok = uvl_wgpu_init(NULL, lean_string_cstr(wgsl), lean_string_cstr(entries));
+  return lean_io_result_mk_ok(lean_box(ok ? 1 : 0));
+}
+
+/* Lean: `GPU.adapterName : IO String`. */
+LEAN_EXPORT lean_obj_res uvl_gpu_adapter_name(lean_obj_arg world) {
+  (void)world;
+  if (!adapter) return lean_io_result_mk_ok(lean_mk_string(""));
+  WGPUAdapterInfo info = {0};
+  wgpuAdapterGetInfo(adapter, &info);
+  char buf[256];
+  snprintf(buf, sizeof buf, "%.*s (%.*s)", (int)info.device.length, info.device.data,
+           (int)info.description.length, info.description.data);
+  wgpuAdapterInfoFreeMembers(info);
+  return lean_io_result_mk_ok(lean_mk_string(buf));
+}

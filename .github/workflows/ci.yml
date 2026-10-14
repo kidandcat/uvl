@@ -50,17 +50,33 @@ jobs:
         with:
           build: false
           test: false
-      - name: Build the SDL3 window app
-        run: lake build uvl-counter
+      - name: Build the SDL3 window app and the GPU check (fetches wgpu-native)
+        run: lake build uvl-counter uvl-gpu-check
         env:
           PKG_CONFIG_PATH: /opt/sdl3/lib/pkgconfig
-      - name: Smoke test (offscreen window, real SDL click)
+      - name: Install Vulkan (Mesa lavapipe) and Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 xvfb
+      - name: GPU renderer vs CPU rasterizer (headless wgpu-native)
+        run: .lake/build/bin/uvl-gpu-check
+      - name: Smoke test, CPU fallback (offscreen window, real SDL click)
         run: |
           UVL_MAX_FRAMES=2 UVL_CLICK_TARGET=1 UVL_SCREENSHOT=counter-window.png \
-            timeout 60 .lake/build/bin/uvl-counter
+            timeout 60 .lake/build/bin/uvl-counter 2>&1 | tee cpu.log
+          grep -q "CPU renderer" cpu.log
           test -s counter-window.png
         env:
           SDL_VIDEO_DRIVER: offscreen
+          LD_LIBRARY_PATH: /opt/sdl3/lib
+      - name: Smoke test, GPU renderer (X11 window on Xvfb, real SDL click)
+        run: |
+          UVL_MAX_FRAMES=2 UVL_CLICK_TARGET=1 UVL_SCREENSHOT=counter-window-gpu.png \
+            timeout 60 xvfb-run -a .lake/build/bin/uvl-counter 2>&1 | tee gpu.log
+          grep -q "GPU renderer" gpu.log
+          test -s counter-window-gpu.png
+        env:
+          SDL_VIDEO_DRIVER: x11
           LD_LIBRARY_PATH: /opt/sdl3/lib
       - uses: actions/upload-artifact@v4
         with:

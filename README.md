@@ -12,9 +12,9 @@ platform only has to provide a *framebuffer* and a stream of events.
 | --- | --- | --- |
 | 1. Core and image | Verified `FrameBuffer`, SDF-based 2D primitives, Bézier paths, gradients, shadows, text, CPU rasterizer, PNG/PPM | ✅ |
 | 2. Layout and DSL | *Box constraints* layout engine with invariants in the types, flex (row/col/expanded), stack, `ui!` DSL, charts | ✅ (first version) |
-| 3. Desktop interactivity | Elm-style runtime (`App`, `Event`), hit testing, hover/press, SDL3 runner (~170 lines of C) | ✅ |
+| 3. Desktop interactivity | Elm-style runtime (`App`, `Event`), hit testing, hover/press, SDL3 runner | ✅ |
 | 4. GPU and browser | Lean runtime + `Init` compiled to WebAssembly with Emscripten, WebGPU presenter with Canvas 2D fallback, DOM events | ✅ |
-| 5. GPU rendering | Typed shader DSL in Lean that emits WGSL, render ops lowered to GPU primitives, SDFs/paths/text evaluated in the fragment shader; output matches the CPU rasterizer | ✅ (WebGPU) |
+| 5. GPU rendering | Typed shader DSL in Lean that emits WGSL, render ops lowered to GPU primitives, SDFs/paths/text evaluated in the fragment shader, one pipeline per primitive kind; browser (WebGPU) and desktop (wgpu-native); output matches the CPU rasterizer | ✅ |
 | Bare metal | Tiled rendering (RGB565 / 1-bit, identical to the full frame), C runtime without `libleanrt` tested on ARM Cortex-M3 (QEMU); see [`baremetal/`](baremetal/README.md) | in progress |
 
 ## Quick start
@@ -25,7 +25,8 @@ lake exe uvl-demo       # writes out/primitives.png, out/hello.png, out/dashboar
 lake test               # golden image, layout and codec tests
 lake test -- --update   # regenerate the golden images
 lake exe uvl-bench      # rasterizer time per frame
-lake exe uvl-counter    # desktop app (needs SDL3)
+lake exe uvl-counter    # desktop app (needs SDL3; renders with wgpu-native)
+lake exe uvl-gpu-check  # GPU renderer vs CPU rasterizer, headless
 web/build.sh            # browser app in web/dist (needs Emscripten)
 ```
 
@@ -92,17 +93,25 @@ def app : App Model Msg where
 
 ![counter](Tests/golden/counter.png)
 
-* **Desktop:** `UVL.SDL.run app` opens a window with SDL3. The C shell
-  ([native/sdl_shell.c](native/sdl_shell.c)) only translates events and copies the RGBA buffer
-  into a texture; there is no UI logic in C. Frames are only redrawn when something changed,
-  so an idle UI costs no CPU.
+* **Desktop:** `UVL.SDL.run app` opens a window with SDL3 and draws it **on the GPU** with
+  the same renderer and WGSL as the browser, through wgpu-native's `webgpu.h` (Vulkan, Metal or
+  D3D12; [native/gpu_shell.c](native/gpu_shell.c)). Without a usable GPU, or with
+  `UVL_RENDERER=cpu`, Lean rasterizes the frames (with partial redraw) and SDL presents them.
+  The C shells ([native/sdl_shell.c](native/sdl_shell.c)) only translate events and move
+  buffers; there is no UI logic in C. Frames are only redrawn when something changed, so an
+  idle UI costs nothing.
 * **Headless / tests:** `Runtime.simulate` feeds a script of events; the tests click around
   and compare the resulting frame with a golden image.
 
 Building the desktop app needs SDL3 (`brew install sdl3`, or build it from the GitHub
-releases). Lake finds it with `pkg-config sdl3` or in the usual prefixes. Without a display it
-can be tested with
-`SDL_VIDEO_DRIVER=offscreen UVL_MAX_FRAMES=2 UVL_CLICK_TARGET=1 UVL_SCREENSHOT=shot.png lake exe uvl-counter`.
+releases); Lake finds it with `pkg-config sdl3` or in the usual prefixes. wgpu-native is
+downloaded on first build (a pinned prebuilt release, see
+[native/fetch_wgpu.sh](native/fetch_wgpu.sh)) unless `WGPU_NATIVE_DIR` points to one. Without
+a display the app can be tested with
+`SDL_VIDEO_DRIVER=offscreen UVL_MAX_FRAMES=2 UVL_CLICK_TARGET=1 UVL_SCREENSHOT=shot.png lake exe uvl-counter`
+(CPU frames; under `xvfb-run` with `SDL_VIDEO_DRIVER=x11` it renders on the GPU and checks the
+GPU frame against the CPU one). `lake exe uvl-gpu-check` renders the example scenes headless on
+the GPU and compares them with the CPU rasterizer.
 
 * **Browser:** `web/build.sh` compiles the same app to WebAssembly; see below.
 
@@ -157,6 +166,9 @@ The counter is a 2 MB `.wasm`. Any app works: export a constructor with
 * **Checked without a GPU**: the tests evaluate the generated shader in Lean for every pixel
   ([GPU/Reference.lean](UVL/GPU/Reference.lean)) and get frames **bit-identical** to
   `Raster.render`, and the DSL's SDFs agree with `UVL.SDF`.
+
+The desktop uses the same program through wgpu-native; CI checks it headless
+(`uvl-gpu-check`, at most 3/255 off) and in an X11 window on Xvfb.
 
 Per frame, the CPU only builds the view and the primitives: 0.07 ms for the counter and
 0.33 ms for the dashboard natively (0.4 ms and 1.9 ms in WebAssembly), instead of 55 and 90 ms
@@ -216,7 +228,8 @@ UVL/
   App/        Event, App and Runtime (Elm architecture, hit testing), Host (C ABI for shells)
   BareMetal/  app shell for microcontrollers (see baremetal/)
 UVLWindow.lean  SDL3 shell (FFI), only used by the uvl-* window executables
-native/       sdl_shell.c
+UVLGPU.lean   desktop GPU renderer bindings (wgpu-native)
+native/       sdl_shell.c, gpu_shell.c, fetch_wgpu.sh
 web/          browser shell (C + JS), build script, headless browser smoke test
 baremetal/    C runtime and tooling for running UVL apps without libleanrt
 Examples/     example scenes and apps, demo executable
@@ -253,7 +266,6 @@ Tests/        golden images, test PNG decoder, test driver
 
 ## Next steps
 
-1. GPU rendering on the desktop (SDL3's GPU API or wgpu-native with the same WGSL), and one
-   pipeline per primitive kind instead of a single branching fragment shader.
-2. Line-wrapping text, a TrueType parser and an MSDF atlas.
+1. Line-wrapping text, a TrueType parser and an MSDF atlas (rendered by the GPU path too).
+2. Persistent GPU buffers updated only where the scene changed.
 3. Stateful widgets: text field, scrolling, sliders; animations with `tick`.
