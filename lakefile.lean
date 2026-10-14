@@ -12,10 +12,14 @@ lean_lib Tests where
   globs := #[.one `Tests.PngDecode, .one `Tests.Tile]
 
 lean_lib Examples where
-  globs := #[.one `Examples.Scenes, .one `Examples.Counter]
+  globs := #[.one `Examples.Scenes, .one `Examples.Counter, .one `Examples.BareMetalCounter]
 
 lean_exe «uviz-demo» where
   root := `Examples.Demo
+
+/-- Reference frames for the bare-metal host test (`baremetal/tools/host_test.sh`). -/
+lean_exe «uvl-baremetal-ref» where
+  root := `Examples.BareMetalRef
 
 @[test_driver]
 lean_exe «uviz-tests» where

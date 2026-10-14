@@ -14,6 +14,7 @@ plataforma anfitriona solo tiene que entregar un *framebuffer* y un flujo de eve
 | 2. Layout y DSL | Motor *Box Constraints* con invariantes en el tipo, flex (row/col/expanded), stack, DSL `ui!`, gráficos | ✅ (primera versión) |
 | 3. Interactividad desktop | Runtime estilo Elm (`App`, `Event`), hit testing, hover/press, runner SDL3 (~170 líneas de C) | ✅ |
 | 4. GPU y navegador | `webgpu.h`, Emscripten | pendiente |
+| Bare metal | Render por tiles (RGB565 / 1 bit, idéntico al frame completo), runtime C sin `libleanrt` probado en ARM Cortex-M3 (QEMU); ver [`baremetal/`](baremetal/README.md) | en curso |
 
 ## Uso rápido
 

@@ -20,3 +20,4 @@ import UniversalViz.UI.DSL
 import UniversalViz.UI.Charts
 import UniversalViz.App.Event
 import UniversalViz.App.Runtime
+import UniversalViz.BareMetal.Shell
