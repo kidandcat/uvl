@@ -139,10 +139,28 @@ baremetal/tools/test.sh                  # also builds .lake/baremetal/pico-{pic
 ```
 
 Flash it by holding BOOTSEL while plugging the board in, then copying
-`uvl_pico.uf2` to the drive that appears. Panic messages and per-frame timing
+`uvl_pico.uf2` to the drive that appears. It is cross-compiled for both boards
+but has not been run on hardware yet; the same bundle runs frame-exact under
+QEMU (Cortex-M3). Panic messages and per-frame timing
 go to UART0 at 115200 baud (GP0/GP1).
 
 | Board | Flash (`.text`) | Static RAM (`.bss`, incl. 96 KB pool) |
 | --- | --- | --- |
 | Pico (RP2040, Cortex-M0+) | ~606 KB of 2 MB | ~115 KB of 264 KB |
 | Pico 2 (RP2350, Cortex-M33) | ~581 KB of 4 MB | ~115 KB of 520 KB |
+
+## ESP32 (ESP-IDF 5.x)
+
+`baremetal/esp-idf/` is an ESP-IDF project. Its `uvl` component compiles the
+bundle, and `main/main.c` drives a 320×240 ST7789 through `esp_lcd`, with two
+DMA-capable tile buffers. The pins are in `main/config.h`. Like the Pico
+build, it is cross-compiled but has not been run on hardware yet.
+
+```sh
+. $IDF_PATH/export.sh
+baremetal/tools/test.sh          # also builds .lake/baremetal/esp-idf/build/uvl_esp32.bin
+cd .lake/baremetal/esp-idf && idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+With ESP-IDF 5.4.1 on an ESP32, the build uses 656 KB of flash code and 121 KB
+of DRAM (112 KB `.bss`, including the 96 KB pool) out of 181 KB.

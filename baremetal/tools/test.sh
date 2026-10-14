@@ -5,7 +5,8 @@
 #   2. run the bundle on the host (64-bit, then 32-bit if `gcc -m32` works);
 #   3. cross-compile it for ARM Cortex-M3 and run it under QEMU (if
 #      arm-none-eabi-gcc and qemu-system-arm are installed);
-#   4. cross-compile the Pico / Pico 2 firmware (if PICO_SDK_PATH is set);
+#   4. cross-compile the Pico / Pico 2 firmware (if PICO_SDK_PATH is set) and
+#      the ESP32 firmware (if ESP-IDF's environment is loaded);
 #
 # and check that every build streams frames byte-identical (RGB565) to the
 # native Lean build of the same exported functions.
@@ -77,5 +78,15 @@ if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null; then
   done
 else
   echo "-- skipping Pico firmware build (set PICO_SDK_PATH)"
+fi
+if [ -n "${IDF_PATH:-}" ] && command -v idf.py >/dev/null; then
+  echo "== ESP-IDF firmware (esp32)"
+  rm -rf "$OUT/esp-idf" && cp -r "$ROOT/baremetal/esp-idf" "$OUT/esp-idf"
+  (cd "$OUT/esp-idf" && UVL_BUNDLE="$B" idf.py set-target esp32 >"$OUT/esp-idf.log" 2>&1 &&
+    UVL_BUNDLE="$B" idf.py build >>"$OUT/esp-idf.log" 2>&1) &&
+  echo "[ok] esp32 firmware: $OUT/esp-idf/build/uvl_esp32.bin" ||
+  { echo "[FAIL] esp32 firmware build (see $OUT/esp-idf.log)"; fail=1; }
+else
+  echo "-- skipping ESP-IDF firmware build (run ESP-IDF's export.sh first)"
 fi
 exit $fail

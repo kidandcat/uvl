@@ -64,8 +64,13 @@ def fix_literals(text):
     would leak one. Route them to `uvl_nat_literal`, which returns interned,
     persistent objects (rt/uvl_rt.c)."""
     text = text.replace('lean_cstr_to_nat(', 'uvl_nat_literal(').replace('lean_cstr_to_int(', 'uvl_int_literal(')
-    return re.sub(r'lean_unsigned_to_nat\((\d+)u\)',
+    text = re.sub(r'lean_unsigned_to_nat\((\d+)u\)',
                   lambda m: m.group(0) if int(m.group(1)) < 2**31 else f'uvl_nat_literal("{m.group(1)}")', text)
+    if 'uvl_nat_literal(' in text or 'uvl_int_literal(' in text:
+        text = text.replace('#include <lean/lean.h>\n', '#include <lean/lean.h>\n'
+                            'LEAN_EXPORT lean_object *uvl_nat_literal(char const *s);\n'
+                            'LEAN_EXPORT lean_object *uvl_int_literal(char const *s);\n', 1)
+    return text
 
 
 def cident(module):

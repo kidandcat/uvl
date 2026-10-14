@@ -1,0 +1,4 @@
+# Lean code recurses more than the default 3.5 KB main task stack allows.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
