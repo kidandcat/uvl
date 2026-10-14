@@ -1,4 +1,4 @@
-# universal-viz
+# uvl — universal visualization library
 
 Librería de visualización universal escrita **100% en Lean 4**: sin DOM, sin GTK/UIKit, sin
 dependencias en C. Lean controla todo, desde el árbol de widgets hasta el último píxel; la
