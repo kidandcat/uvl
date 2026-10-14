@@ -1,4 +1,5 @@
 import UVL.Render.Path
+import UVL.Render.MSDF
 
 /-!
 # TrueType fonts
@@ -44,15 +45,43 @@ structure Font where
   /-- `(left * 65536 + right, adjustment)` sorted by key. -/
   kerning : Array (Nat × Float)
   glyphs : Array Glyph
+  /-- The font's MSDF atlas (texels computed glyph by glyph on first use). -/
+  atlas : MSDF.Atlas
 deriving Inhabited
+
+/-- Sort pairs by key (bottom-up merge sort). Written out because the compiled
+specialization of `Array.qsort` lives in the `Lean` package, which the
+WebAssembly build does not link. -/
+def sortByKey {α : Type} [Inhabited α] (a : Array (Nat × α)) : Array (Nat × α) := Id.run do
+  let n := a.size
+  let mut src := a
+  let mut width := 1
+  while width < n do
+    let mut dst : Array (Nat × α) := Array.mkEmpty n
+    let mut lo := 0
+    while lo < n do
+      let mid := Min.min (lo + width) n
+      let hi := Min.min (lo + 2 * width) n
+      let mut i := lo
+      let mut j := mid
+      while i < mid || j < hi do
+        if j >= hi || (i < mid && src[i]!.1 <= src[j]!.1) then
+          dst := dst.push src[i]!; i := i + 1
+        else
+          dst := dst.push src[j]!; j := j + 1
+      lo := hi
+    src := dst
+    width := 2 * width
+  return src
 
 /-- Offset of a table, by its 4-character tag. -/
 def tableOffset (d : ByteArray) (tag : String) : Option Nat := Id.run do
   let n := u16 d 4
-  let t := tag.toList.map (·.toNat)
+  let t := tag.toUTF8
   for i in [0:n] do
     let r := 12 + 16 * i
-    if [u8 d r, u8 d (r + 1), u8 d (r + 2), u8 d (r + 3)] == t then
+    if t.size == 4 && u8 d r == t[0]!.toNat && u8 d (r + 1) == t[1]!.toNat
+        && u8 d (r + 2) == t[2]!.toNat && u8 d (r + 3) == t[3]!.toNat then
       return some (u32 d (r + 8))
   return none
 
@@ -105,7 +134,7 @@ def readCmap (d : ByteArray) (cmap : Nat) : Array (Nat × Nat) := Id.run do
             let gi := u16 d (ranges + 2 * s + ro + 2 * (c - start))
             if gi == 0 then 0 else (gi + delta) % 65536
         if g != 0 then out := out.push (c, g)
-  return out.qsort (·.1 < ·.1)
+  return sortByKey out
 
 /-- Pairs of the first format-0 subtable of a version-0 `kern` table. -/
 def readKern (d : ByteArray) (unitsPerEm : Float) : Option Nat → Array (Nat × Float)
@@ -119,7 +148,7 @@ def readKern (d : ByteArray) (unitsPerEm : Float) : Option Nat → Array (Nat ×
     for i in [0:n] do
       let r := sub + 14 + 6 * i
       out := out.push (u16 d r * 65536 + u16 d (r + 2), Float.ofInt (i16 d (r + 4)) / unitsPerEm)
-    return out.qsort (·.1 < ·.1)
+    return sortByKey out
 
 /-- Quadratic contour from TrueType points (on/off curve, implied midpoints). -/
 def contourPath (p : Path) (pts : Array (Float × Float × Bool)) : Path := Id.run do
@@ -241,8 +270,10 @@ partial def outline (d : ByteArray) (glyf loca : Nat) (longLoca : Bool) (numGlyp
     return path
 
 /-- Parse a TrueType font. Outlines are converted once, scaled to the em
-square (1 unit = 1 em) with y pointing down. -/
-def Font.load (d : ByteArray) : Except String Font := do
+square (1 unit = 1 em) with y pointing down. `atlasId` identifies the font's
+MSDF atlas (GPU hosts key uploaded glyphs by it): give each loaded font its own
+(the bundled font uses 0). -/
+def Font.load (d : ByteArray) (atlasId : Nat := 0) : Except String Font := do
   let some head := tableOffset d "head" | throw "no head table"
   let some hhea := tableOffset d "hhea" | throw "no hhea table"
   let some maxp := tableOffset d "maxp" | throw "no maxp table"
@@ -266,7 +297,7 @@ def Font.load (d : ByteArray) : Except String Font := do
     lineGap := Float.ofInt (i16 d (hhea + 8)) / upem
     numGlyphs, cmap := readCmap d cmap
     kerning := readKern d upem (tableOffset d "kern")
-    glyphs }
+    glyphs, atlas := MSDF.Atlas.ofOutlines atlasId (glyphs.map (·.path)) }
 
 /-- Binary search in an array sorted by key. -/
 def findKey {α : Type} (arr : Array (Nat × α)) (k : Nat) : Option α := Id.run do

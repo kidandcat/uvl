@@ -133,6 +133,21 @@ def linesOps (f : Font) (lines : Array String) (size : Float) (color : Color)
     ops := ops ++ lineOps f lines[i]! size color origin.x baseline
   return ops
 
+/-- MSDF version of `linesOps`: one `glyphs` op per line, drawn from the font's
+atlas. Cheaper than outlines for large amounts of text,
+especially on the GPU, at the cost of slightly rounder fine details. -/
+def linesOpsMSDF (f : Font) (lines : Array String) (size : Float)
+    (paint : Paint) (origin : Vec2) : Array RenderOp := Id.run do
+  let lh := f.lineHeight * size
+  let mut ops := #[]
+  for i in [0:lines.size] do
+    let baseline := (origin.y + f.ascender * size + i.toFloat * lh).round
+    let quads := (shape f lines[i]!).1.filterMap fun pg =>
+      if (f.glyph pg.glyph).path.cmds.isEmpty then none
+      else some { glyph := pg.glyph, x := origin.x + pg.x * size, y := baseline, size }
+    if !quads.isEmpty then ops := ops.push (.glyphs f.atlas quads paint)
+  return ops
+
 /-- Size in whole pixels of a block of lines. -/
 def linesSize (f : Font) (lines : Array String) (size : Float) : Nat × Nat :=
   let w := lines.foldl (fun m l => Max.max m (measure f l size)) 0

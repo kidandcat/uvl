@@ -19,7 +19,10 @@ namespace UVL.GPU
 def referenceRender (w h : Nat) (ops : Array RenderOp) (bg : Color := Color.white) :
     FrameBuffer w h := Id.run do
   let b := Batch.build w h ops
-  let buffers := fun n => if n == "prims" then b.prims else if n == "data" then b.data else .empty
+  let atlas := b.atlasData
+  let buffers := fun n =>
+    if n == "prims" then b.prims else if n == "data" then b.data
+    else if n == "atlas" then atlas else .empty
   let mut fb := FrameBuffer.new w h bg
   for i in [0:b.count] do
     let base := i * primStride

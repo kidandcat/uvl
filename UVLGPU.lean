@@ -23,6 +23,14 @@ when presenting to a window). -/
 opaque drawRaw (prims data : @& FloatArray) (count w h : UInt32) (bg : @& FloatArray)
   (readback : Bool) : IO ByteArray
 
+/-- Replace the MSDF atlas buffer by a zeroed one of `floats` floats. -/
+@[extern "uvl_gpu_atlas_reset"]
+opaque atlasReset (floats : UInt32) : IO Unit
+
+/-- Upload one atlas cell at float offset `offset`. -/
+@[extern "uvl_gpu_atlas_write"]
+opaque atlasWrite (offset : UInt32) (texels : @& FloatArray) : IO Unit
+
 /-- Name of the GPU in use. -/
 @[extern "uvl_gpu_adapter_name"]
 opaque adapterName : IO String
@@ -32,10 +40,29 @@ def entries : String := ",".intercalate GPU.kindEntryPoints
 
 def initHeadless' : IO Bool := initHeadless GPU.shaderSource entries
 
+/-- The atlas on the GPU (its id plus one, 0 for none) and the glyphs uploaded. -/
+initialize atlasState : IO.Ref (Nat × Array Bool) ← IO.mkRef (0, #[])
+
+/-- Upload the cells of the batch's MSDF glyphs that are not on the GPU yet
+(recreating the atlas buffer when the batch uses another atlas). -/
+def syncAtlas (b : GPU.Batch) : IO Unit := do
+  let some a := b.atlas | return
+  let (id, up) ← atlasState.get
+  let mut up := up
+  if id != a.id + 1 then
+    atlasReset b.atlasSize.toUInt32
+    up := Array.replicate a.cells.size false
+  for g in b.atlasGlyphs do
+    if !(up[g]?.getD true) then
+      atlasWrite (g * MSDF.cellFloats).toUInt32 (a.glyphTexels g)
+      up := up.set! g true
+  atlasState.set (a.id + 1, up)
+
 /-- Lower a `w × h` scene and draw it on the GPU. -/
 def draw (w h : Nat) (ops : Array RenderOp) (bg : Color) (readback : Bool := false) :
-    IO ByteArray :=
+    IO ByteArray := do
   let b := GPU.Batch.build w h ops
+  syncAtlas b
   drawRaw b.prims b.data b.count.toUInt32 w.toUInt32 h.toUInt32
     (FloatArray.empty.push bg.r |>.push bg.g |>.push bg.b |>.push bg.a) readback
 

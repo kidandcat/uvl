@@ -29,8 +29,8 @@ static WGPUTextureFormat format = WGPUTextureFormat_RGBA8Unorm;
 static WGPUBindGroupLayout bgl;
 static WGPURenderPipeline pipelines[MAX_KINDS];
 static int nkinds;
-static WGPUBuffer prims_buf, data_buf, screen_buf;
-static uint64_t prims_cap, data_cap;
+static WGPUBuffer prims_buf, data_buf, screen_buf, atlas_buf;
+static uint64_t prims_cap, data_cap, atlas_cap;
 static WGPUBindGroup bind_group;
 static uint32_t surf_w, surf_h;
 static float *scratch;
@@ -77,12 +77,13 @@ static int create_pipelines(const char *wgsl, const char *entries) {
   if (!module) return 0;
 
   WGPUShaderStage vis = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-  WGPUBindGroupLayoutEntry e[3] = {
+  WGPUBindGroupLayoutEntry e[4] = {
     {.binding = 0, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_ReadOnlyStorage}},
     {.binding = 1, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_ReadOnlyStorage}},
     {.binding = 2, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_Uniform}},
+    {.binding = 3, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_ReadOnlyStorage}},
   };
-  WGPUBindGroupLayoutDescriptor bgld = {.entryCount = 3, .entries = e};
+  WGPUBindGroupLayoutDescriptor bgld = {.entryCount = 4, .entries = e};
   bgl = wgpuDeviceCreateBindGroupLayout(device, &bgld);
   WGPUPipelineLayoutDescriptor pld = {.bindGroupLayoutCount = 1, .bindGroupLayouts = &bgl};
   WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(device, &pld);
@@ -137,6 +138,9 @@ static int init_device(void) {
   queue = wgpuDeviceGetQueue(device);
   WGPUBufferDescriptor bd = {.size = 16, .usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst};
   screen_buf = wgpuDeviceCreateBuffer(device, &bd);
+  WGPUBufferDescriptor ad = {.size = 16, .usage = WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst};
+  atlas_buf = wgpuDeviceCreateBuffer(device, &ad);
+  atlas_cap = 16;
   return 1;
 }
 
@@ -214,12 +218,13 @@ static void draw(WGPUTexture target, b_lean_obj_arg prims, uint32_t count, uint3
                  b_lean_obj_arg bg, WGPUBuffer readback, uint32_t stride) {
   ensure(&prims_buf, &prims_cap, sizeof(float) * lean_sarray_size(prims));
   if (!bind_group) {
-    WGPUBindGroupEntry e[3] = {
+    WGPUBindGroupEntry e[4] = {
       {.binding = 0, .buffer = prims_buf, .size = prims_cap},
       {.binding = 1, .buffer = data_buf, .size = data_cap},
       {.binding = 2, .buffer = screen_buf, .size = 16},
+      {.binding = 3, .buffer = atlas_buf, .size = atlas_cap},
     };
-    WGPUBindGroupDescriptor bgd = {.layout = bgl, .entryCount = 3, .entries = e};
+    WGPUBindGroupDescriptor bgd = {.layout = bgl, .entryCount = 4, .entries = e};
     bind_group = wgpuDeviceCreateBindGroup(device, &bgd);
   }
   upload(prims_buf, prims);
@@ -333,6 +338,37 @@ LEAN_EXPORT lean_obj_res uvl_gpu_draw(b_lean_obj_arg prims, b_lean_obj_arg data,
   wgpuBufferRelease(rb);
   wgpuTextureRelease(offscreen);
   return lean_io_result_mk_ok(out);
+}
+
+/* Lean: `GPU.atlasReset floats : IO Unit`. Replace the MSDF atlas buffer by a
+ * zeroed one of `floats` floats (a frame drawing from a different atlas). */
+LEAN_EXPORT lean_obj_res uvl_gpu_atlas_reset(uint32_t floats, lean_obj_arg world) {
+  (void)world;
+  if (!device) return io_error("uvl: GPU not initialized");
+  uint64_t bytes = floats < 4 ? 16 : ((uint64_t)floats * 4 + 15) / 16 * 16;
+  if (atlas_buf) wgpuBufferRelease(atlas_buf);
+  WGPUBufferDescriptor bd = {.size = bytes, .usage = WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst};
+  atlas_buf = wgpuDeviceCreateBuffer(device, &bd);
+  atlas_cap = bytes;
+  if (bind_group) wgpuBindGroupRelease(bind_group);
+  bind_group = NULL;
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
+/* Lean: `GPU.atlasWrite offset texels : IO Unit`. Upload one glyph cell at
+ * float offset `offset` of the atlas buffer. */
+LEAN_EXPORT lean_obj_res uvl_gpu_atlas_write(uint32_t offset, b_lean_obj_arg texels, lean_obj_arg world) {
+  (void)world;
+  if (!device) return io_error("uvl: GPU not initialized");
+  size_t n = lean_sarray_size(texels);
+  if (n && ((uint64_t)offset + n) * 4 <= atlas_cap) {
+    float *tmp = malloc(sizeof(float) * n);
+    const double *src = lean_float_array_cptr(texels);
+    for (size_t i = 0; i < n; i++) tmp[i] = (float)src[i];
+    wgpuQueueWriteBuffer(queue, atlas_buf, (uint64_t)offset * 4, tmp, sizeof(float) * n);
+    free(tmp);
+  }
+  return lean_io_result_mk_ok(lean_box(0));
 }
 
 /* Lean: `GPU.initHeadless wgsl entries : IO Bool` (no window, offscreen only). */

@@ -15,6 +15,7 @@ platform only has to provide a *framebuffer* and a stream of events.
 | 3. Desktop interactivity | Elm-style runtime (`App`, `Event`), hit testing, hover/press, SDL3 runner | ✅ |
 | 4. GPU and browser | Lean runtime + `Init` compiled to WebAssembly with Emscripten, WebGPU presenter with Canvas 2D fallback, DOM events | ✅ |
 | 5. GPU rendering | Typed shader DSL in Lean that emits WGSL, render ops lowered to GPU primitives, SDFs/paths/text evaluated in the fragment shader, one pipeline per primitive kind; browser (WebGPU) and desktop (wgpu-native); output matches the CPU rasterizer | ✅ |
+| 6. Fonts | TrueType parser in Lean, embedded UVL Sans, kerning and wrapping, `label`/`paragraph`; MSDF atlas generated in Lean, persistent on the GPU, identical sampling on CPU and GPU | ✅ |
 | Bare metal | Tiled rendering (RGB565 / 1-bit, identical to the full frame), C runtime without `libleanrt` tested on ARM Cortex-M3 (QEMU); see [`baremetal/`](baremetal/README.md) | in progress |
 
 ## Quick start
@@ -64,6 +65,15 @@ col [ label "Typography in pure Lean" (size := 28),
 Glyph outlines become ordinary path fills, so the CPU rasterizer, damage tracking, tiles
 and the GPU kernels all draw them. `text` keeps the built-in bitmap font, which is what the
 bare-metal targets use.
+
+With `msdf := true` (or `Text.linesOpsMSDF`), glyphs are drawn from the font's **MSDF
+atlas** ([Render/MSDF.lean](UVL/Render/MSDF.lean)) instead: each glyph is turned once, in
+Lean, into a 32×32 grid of three signed distances (edge coloring at corners, pseudo-distances,
+sign fixed by winding number), and drawing costs a bilinear lookup and a median per pixel at
+any size, rotation or scale. Cells are generated on first use (about 4 ms per glyph). On the
+GPU the atlas is a buffer that persists across frames: each glyph's cell is uploaded once.
+
+![msdf](Tests/golden/msdf.png)
 
 ### The `ui!` DSL
 
@@ -175,7 +185,8 @@ The counter is a 2 MB `.wasm`. Any app works: export a constructor with
   them. Every program also has a meaning in Lean (`Stmt.run`).
 * **Kernels in the DSL** ([GPU/Kernels.lean](UVL/GPU/Kernels.lean)): the signed distance
   functions of `Render/SDF.lean`, the scanline rule of the path filler evaluated per pixel,
-  distance to flattened polylines for strokes, exact glyph-cell coverage for text, gradients.
+  distance to flattened polylines for strokes, exact glyph-cell coverage for text, MSDF
+  atlas sampling, gradients.
 * **Lowering** ([GPU/Batch.lean](UVL/GPU/Batch.lean)): each render op becomes one primitive (a
   pixel rectangle drawn as two triangles, plus its parameters) or, for paths, one per 8-row
   band carrying only that band's edges. Each primitive covers exactly the pixels the CPU
@@ -186,7 +197,7 @@ The counter is a 2 MB `.wasm`. Any app works: export a constructor with
   `Raster.render`, and the DSL's SDFs agree with `UVL.SDF`.
 
 The desktop uses the same program through wgpu-native; CI checks it headless
-(`uvl-gpu-check`, at most 3/255 off) and in an X11 window on Xvfb.
+(`uvl-gpu-check`, at most 3/255 off, MSDF text included) and in an X11 window on Xvfb.
 
 Per frame, the CPU only builds the view and the primitives: 0.07 ms for the counter and
 0.33 ms for the dashboard natively (0.4 ms and 1.9 ms in WebAssembly), instead of 55 and 90 ms
@@ -285,6 +296,7 @@ Tests/        golden images, test PNG decoder, test driver
 
 ## Next steps
 
-1. An MSDF glyph atlas for large amounts of text (sampled identically on CPU and GPU).
-2. Persistent GPU buffers updated only where the scene changed.
-3. Stateful widgets: text field, scrolling, sliders; animations with `tick`.
+1. Persistent primitive buffers on the GPU, updated only where the scene changed.
+2. Stateful widgets: text field, scrolling, sliders; animations with `tick`.
+3. Faster CPU sampling of MSDF glyphs (today outlines are about 2.5× faster on the CPU;
+   MSDF is the better choice on the GPU).

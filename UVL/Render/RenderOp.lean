@@ -1,6 +1,7 @@
 import UVL.Render.SDF
 import UVL.Render.Paint
 import UVL.Render.Path
+import UVL.Render.MSDF
 
 /-!
 # RenderOp: the immutable scene graph
@@ -34,6 +35,8 @@ inductive RenderOp where
   | shadow (r : Rect) (radius blur : Float) (c : Color)
   /-- Text with the built-in font; `pos` is the top-left corner, `scale` the cell size in px. -/
   | text (pos : Vec2) (s : String) (scale : Float) (c : Color)
+  /-- Glyphs drawn from an MSDF atlas (see `Render/MSDF.lean`). -/
+  | glyphs (atlas : MSDF.Atlas) (quads : Array MSDF.GlyphQuad) (p : Paint)
   | transform (m : Affine) (ops : Array RenderOp)
   | clip (r : Rect) (ops : Array RenderOp)
   | group (ops : Array RenderOp)

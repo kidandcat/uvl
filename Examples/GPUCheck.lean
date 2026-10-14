@@ -26,6 +26,8 @@ def scenes : List Scene := [
   ⟨"primitives", 480, 320, Examples.primitives, Color.white⟩,
   ⟨"hello", 320, 160, Examples.hello.toOps 320 160, Color.hex 0xECEFF1⟩,
   ⟨"dashboard", 800, 600, Examples.dashboard.toOps 800 600, Color.hex 0xF5F7FA⟩,
+  ⟨"typography", 460, 280, Examples.typography.toOps 460 280, Color.hex 0xECEFF1⟩,
+  ⟨"msdf", 560, 260, Examples.msdfText, Color.white⟩,
   counterScene
 ]
 

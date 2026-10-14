@@ -24,10 +24,15 @@ Record layout (`GPU/Kernels.lean` reads the same slots):
 | 14     | transform scale factor                                           |
 | 15     | blur (device px)                                                 |
 | 16–19  | shape parameters / data offset and count / glyph position, bits  |
-| 20–23  | corner radii                                                     |
+| 20–23  | corner radii / MSDF pen position and size                         |
 | 24–26  | paint kind (0 solid, 1 linear, 2 radial), stop offset, count     |
 | 28–31  | solid color                                                      |
 | 32–35  | gradient geometry                                                |
+
+MSDF glyphs read their texels from a third buffer, the atlas, which persists
+across frames: a batch names the atlas it uses and the glyphs it draws
+(`atlasGlyphs`), and the host uploads each glyph's cell the first time it shows
+up. One atlas per frame is supported; glyphs of any other atlas are skipped.
 -/
 
 namespace UVL.GPU
@@ -39,6 +44,10 @@ structure Batch where
   prims : FloatArray := .empty
   data : FloatArray := .empty
   count : Nat := 0
+  /-- The MSDF atlas the batch draws from, if any. -/
+  atlas : Option MSDF.Atlas := none
+  /-- Atlas glyphs drawn by the batch, in order of first use. -/
+  atlasGlyphs : Array Nat := #[]
 deriving Inhabited
 
 /-- A primitive record before packing. -/
@@ -180,9 +189,34 @@ partial def op {w h : Nat} (ctx : Ctx w h) (b : Batch) : RenderOp → Batch
       let gx := o.x + (k * Font.advance).toF * sc
       b.push (ctx.clipTo ⟨gx, o.y, 5.0 * sc, 7.0 * sc⟩)
         { kind := kindGlyph, hw := sc, a := ⟨gx, o.y, lo.toF, hi.toF⟩ } (.solid c)
+  | .glyphs atlas quads paint =>
+    if b.atlas.any (·.id != atlas.id) then b else
+    quads.foldl (init := { b with atlas := some atlas }) fun b q =>
+      let c := atlas.cell q.glyph
+      if c.w <= 0 then b else
+      let b := if MSDF.hasNat b.atlasGlyphs q.glyph then b
+        else { b with atlasGlyphs := b.atlasGlyphs.push q.glyph }
+      b.push (ctx.clipTo ((ctx.m.mapRect (atlas.quadRect q)).inflate 1.0))
+        { kind := kindMSDF, inv := ctx.m.inverse, scale := ctx.m.scaleFactor,
+          a := ⟨(q.glyph * MSDF.cellFloats).toF, c.x, c.y, c.texel⟩,
+          radii := ⟨q.x, q.y, q.size, 0⟩ } paint
   | .transform m ops => ops.foldl (op { ctx with m := ctx.m.compose m }) b
   | .clip r ops => ops.foldl (op { ctx with clip := ctx.clipTo (ctx.m.mapRect r) }) b
   | .group ops => ops.foldl (op ctx) b
+
+/-- Size in floats of the atlas buffer the batch needs (0 without MSDF glyphs). -/
+def atlasSize (b : Batch) : Nat := (b.atlas.map (·.cells.size)).getD 0 * MSDF.cellFloats
+
+/-- The atlas buffer with the cells of the batch's glyphs filled in (the rest
+zero). Hosts upload cells incrementally instead; this is for tests. -/
+def atlasData (b : Batch) : FloatArray := Id.run do
+  let some a := b.atlas | return .empty
+  let mut out := FloatArray.mk (Array.replicate b.atlasSize 0)
+  for g in b.atlasGlyphs do
+    let tex := a.glyphTexels g
+    for k in [0:tex.size] do
+      out := out.set! (g * MSDF.cellFloats + k) tex[k]!
+  return out
 
 /-- Lower a `w × h` scene. -/
 def build (w h : Nat) (ops : Array RenderOp) : Batch :=

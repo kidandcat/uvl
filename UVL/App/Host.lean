@@ -172,7 +172,30 @@ namespace GPU.Batch
 @[export uvl_gpu_batch_data] def dataOf (b : Batch) : FloatArray := b.data
 @[export uvl_gpu_batch_count] def countOf (b : Batch) : UInt32 := b.count.toUInt32
 
+/-- The MSDF atlas the batch draws from: its id plus one, or 0 for none. -/
+@[export uvl_gpu_batch_atlas_id] def atlasIdOf (b : Batch) : UInt32 :=
+  match b.atlas with
+  | some a => (a.id + 1).toUInt32
+  | none => 0
+
+/-- Size of the atlas buffer, in floats. -/
+@[export uvl_gpu_batch_atlas_size] def atlasSizeOf (b : Batch) : UInt32 := b.atlasSize.toUInt32
+
+/-- Atlas glyphs the batch draws (as floats). -/
+@[export uvl_gpu_batch_atlas_glyphs] def atlasGlyphsOf (b : Batch) : FloatArray :=
+  b.atlasGlyphs.foldl (fun a g => a.push g.toFloat) .empty
+
+/-- Texels of atlas glyph `g` (`MSDF.cellFloats` floats, uploaded at
+`g * MSDF.cellFloats`). -/
+@[export uvl_gpu_batch_atlas_cell] def atlasCellOf (b : Batch) (g : UInt32) : FloatArray :=
+  match b.atlas with
+  | some a => a.glyphTexels g.toNat
+  | none => .empty
+
 end GPU.Batch
+
+/-- Floats per MSDF atlas cell. -/
+@[export uvl_gpu_atlas_cell_floats] def gpuCellFloats (_ : Unit) : UInt32 := MSDF.cellFloats.toUInt32
 
 /-- WGSL source of the GPU renderer (`GPU/Kernels.lean`). -/
 @[export uvl_gpu_shader] def gpuShader (_ : Unit) : String := GPU.shaderSource

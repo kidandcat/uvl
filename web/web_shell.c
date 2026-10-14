@@ -46,6 +46,11 @@ extern lean_object *uvl_host_invalidate(lean_object *r);
 extern lean_object *uvl_gpu_batch_prims(lean_object *b);
 extern lean_object *uvl_gpu_batch_data(lean_object *b);
 extern uint32_t uvl_gpu_batch_count(lean_object *b);
+extern uint32_t uvl_gpu_batch_atlas_id(lean_object *b);
+extern uint32_t uvl_gpu_batch_atlas_size(lean_object *b);
+extern lean_object *uvl_gpu_batch_atlas_glyphs(lean_object *b);
+extern lean_object *uvl_gpu_batch_atlas_cell(lean_object *b, uint32_t g);
+extern uint32_t uvl_gpu_atlas_cell_floats(lean_object *unit);
 extern lean_object *uvl_gpu_shader(lean_object *unit);
 extern lean_object *uvl_gpu_entry_points(lean_object *unit);
 
@@ -79,9 +84,59 @@ static void to_f32(fbuf *dst, lean_object *arr) {
   dst->len = n;
 }
 
+/* MSDF atlas: the GPU buffer lives in JS and persists across frames. Each
+ * frame, the cells of glyphs not uploaded yet are queued here (glyph indices
+ * and texels, as f32) until JS writes them and calls `uvl_gpu_atlas_ack`. A
+ * different atlas (id) asks JS to recreate the buffer. */
+static uint32_t g_atlas_id = 0, g_atlas_size = 0;
+static int g_atlas_reset = 0;
+static uint8_t *g_uploaded = NULL;
+static size_t g_uploaded_n = 0;
+static fbuf g_new_glyphs, g_new_data;
+
+static void fpush(fbuf *dst, const double *src, size_t n) {
+  if (dst->len + n > dst->cap) {
+    dst->cap = (dst->len + n) * 2;
+    dst->p = realloc(dst->p, sizeof(float) * dst->cap);
+  }
+  for (size_t i = 0; i < n; i++) dst->p[dst->len + i] = (float)src[i];
+  dst->len += n;
+}
+
+static void sync_atlas(lean_object *b) {
+  lean_inc(b);
+  uint32_t id = uvl_gpu_batch_atlas_id(b);
+  if (!id) return;
+  if (id != g_atlas_id) {
+    lean_inc(b);
+    g_atlas_size = uvl_gpu_batch_atlas_size(b);
+    g_atlas_id = id;
+    g_atlas_reset = 1;
+    g_new_glyphs.len = g_new_data.len = 0;
+    free(g_uploaded);
+    g_uploaded_n = g_atlas_size / uvl_gpu_atlas_cell_floats(lean_box(0));
+    g_uploaded = calloc(g_uploaded_n + 1, 1);
+  }
+  lean_inc(b);
+  lean_object *gs = uvl_gpu_batch_atlas_glyphs(b);
+  const double *g = lean_float_array_cptr(gs);
+  for (size_t i = 0; i < lean_sarray_size(gs); i++) {
+    uint32_t k = (uint32_t)g[i];
+    if (k >= g_uploaded_n || g_uploaded[k]) continue;
+    g_uploaded[k] = 1;
+    lean_inc(b);
+    lean_object *cell = uvl_gpu_batch_atlas_cell(b, k);
+    fpush(&g_new_glyphs, &g[i], 1);
+    fpush(&g_new_data, lean_float_array_cptr(cell), lean_sarray_size(cell));
+    lean_dec_ref(cell);
+  }
+  lean_dec_ref(gs);
+}
+
 static void build_gpu(void) {
   lean_inc(g_rt);
   lean_object *b = uvl_host_gpu_batch(g_rt);
+  sync_atlas(b);
   lean_inc(b);
   lean_object *prims = uvl_gpu_batch_prims(b);
   lean_inc(b);
@@ -153,6 +208,7 @@ EMSCRIPTEN_KEEPALIVE uint8_t *uvl_frame_ptr(void) { return g_pixels; }
  * produces a complete frame in the new mode. */
 EMSCRIPTEN_KEEPALIVE void uvl_set_gpu(int on) {
   g_gpu = on;
+  g_atlas_id = 0; /* the renderer re-uploads the atlas */
   g_rt = uvl_host_invalidate(g_rt);
 }
 
@@ -168,6 +224,18 @@ EMSCRIPTEN_KEEPALIVE float *uvl_gpu_data(void) { return g_data.p; }
 EMSCRIPTEN_KEEPALIVE uint32_t uvl_gpu_data_len(void) { return (uint32_t)g_data.len; }
 EMSCRIPTEN_KEEPALIVE uint32_t uvl_gpu_count(void) { return g_count; }
 EMSCRIPTEN_KEEPALIVE float *uvl_gpu_background(void) { return g_bg; }
+/* MSDF atlas (see sync_atlas): 1 when JS must (re)create the buffer with
+ * `uvl_gpu_atlas_size()` floats; then the queued cells to write. */
+EMSCRIPTEN_KEEPALIVE int uvl_gpu_atlas_reset(void) { return g_atlas_reset; }
+EMSCRIPTEN_KEEPALIVE uint32_t uvl_gpu_atlas_size(void) { return g_atlas_size; }
+EMSCRIPTEN_KEEPALIVE uint32_t uvl_gpu_cell_floats(void) { return uvl_gpu_atlas_cell_floats(lean_box(0)); }
+EMSCRIPTEN_KEEPALIVE uint32_t uvl_gpu_atlas_new_count(void) { return (uint32_t)g_new_glyphs.len; }
+EMSCRIPTEN_KEEPALIVE float *uvl_gpu_atlas_new_glyphs(void) { return g_new_glyphs.p; }
+EMSCRIPTEN_KEEPALIVE float *uvl_gpu_atlas_new_data(void) { return g_new_data.p; }
+EMSCRIPTEN_KEEPALIVE void uvl_gpu_atlas_ack(void) {
+  g_atlas_reset = 0;
+  g_new_glyphs.len = g_new_data.len = 0;
+}
 
 /* WGSL source of the renderer (NUL-terminated, lives as long as the module). */
 EMSCRIPTEN_KEEPALIVE const char *uvl_gpu_shader_source(void) {

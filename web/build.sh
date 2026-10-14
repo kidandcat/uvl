@@ -127,7 +127,7 @@ xargs -P "$JOBS" -I{} sh -c 'f={}; o='"$APP"'/$(echo "$f" | sed "s|.lake/build/i
 emcc $CFLAGS -I"$INC" -DUVL_WEB_INIT="$INIT_SYM" -c web/web_shell.c -o "$APP/web_shell.o"
 emcc $CFLAGS -I"$INC" -c web/lean_stubs.c -o "$APP/lean_stubs.o"
 
-EXPORTS=_uvl_init,_uvl_step,_uvl_frame_ptr,_uvl_width,_uvl_height,_uvl_target_center,_uvl_damage_ptr,_uvl_damage_count,_uvl_set_gpu,_uvl_render_cpu,_uvl_gpu_prims,_uvl_gpu_prims_len,_uvl_gpu_data,_uvl_gpu_data_len,_uvl_gpu_count,_uvl_gpu_background,_uvl_gpu_shader_source,_uvl_gpu_entry_points_source,_malloc,_free
+EXPORTS=_uvl_init,_uvl_step,_uvl_frame_ptr,_uvl_width,_uvl_height,_uvl_target_center,_uvl_damage_ptr,_uvl_damage_count,_uvl_set_gpu,_uvl_render_cpu,_uvl_gpu_prims,_uvl_gpu_prims_len,_uvl_gpu_data,_uvl_gpu_data_len,_uvl_gpu_count,_uvl_gpu_background,_uvl_gpu_shader_source,_uvl_gpu_entry_points_source,_uvl_gpu_atlas_reset,_uvl_gpu_atlas_size,_uvl_gpu_cell_floats,_uvl_gpu_atlas_new_count,_uvl_gpu_atlas_new_glyphs,_uvl_gpu_atlas_new_data,_uvl_gpu_atlas_ack,_malloc,_free
 LINK=(em++ -O2 -fwasm-exceptions "$APP"/*.o "$CACHE/libExtra-$EXTRA_KEY.a" "$CACHE/libInit.a" "$CACHE/libleanrt.a"
       -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=8MB -sENVIRONMENT=web,node
       -sEXPORTED_FUNCTIONS=$EXPORTS -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF64,HEAPF32,UTF8ToString

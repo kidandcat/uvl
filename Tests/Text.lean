@@ -48,6 +48,28 @@ def run : IO Bool := do
     if d > mx then mx := d
   ok := (← check s!"text: {ops.size} glyph fills, interpreted shader vs CPU: max error {mx}"
     (mx ≤ 1)) && ok
+  -- MSDF: close to the exact outlines, and the GPU program matches the CPU
+  let outl := (Raster.render 240 70 (linesOps f #["Wave ßé@"] 48 Color.black ⟨4, 4⟩)).data
+  let msdf := (Raster.render 240 70 (linesOpsMSDF f #["Wave ßé@"] 48 (.solid Color.black) ⟨4, 4⟩)).data
+  let mut sum := 0
+  let mut big := 0
+  for i in [0:outl.size] do
+    let d := ((outl[i]!.toNat : Int) - msdf[i]!.toNat).natAbs
+    sum := sum + d
+    if d > 64 then big := big + 1
+  let mean := sum.toFloat / outl.size.toFloat
+  ok := (← check s!"MSDF vs outlines at 48 px: mean |Δ| {mean}, {big} bytes off by > 64"
+    (mean < 1.0 && big * 1000 < outl.size)) && ok
+  let ops2 := Examples.msdfText
+  let b := GPU.Batch.build 560 260 ops2
+  let gpu := (GPU.referenceRender 560 260 ops2).data
+  let cpu := (Raster.render 560 260 ops2).data
+  let mut mx2 := 0
+  for i in [0:cpu.size] do
+    let d := ((gpu[i]!.toNat : Int) - cpu[i]!.toNat).natAbs
+    if d > mx2 then mx2 := d
+  ok := (← check s!"MSDF scene: {b.count} quads, {b.atlasGlyphs.size} atlas glyphs, interpreted shader vs CPU: max error {mx2}"
+    (mx2 ≤ 1 && b.atlasGlyphs.size == (b.atlasGlyphs.toList.eraseDups).length)) && ok
   return ok
 
 end Tests.Text

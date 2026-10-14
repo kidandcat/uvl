@@ -13,7 +13,7 @@ lean_lib Tests where
 
 lean_lib Examples where
   globs := #[.one `Examples.Scenes, .one `Examples.Counter, .one `Examples.BareMetalCounter,
-    .one `Examples.CounterWeb, .one `Examples.DashboardWeb]
+    .one `Examples.CounterWeb, .one `Examples.DashboardWeb, .one `Examples.TextWeb]
 
 lean_exe «uvl-demo» where
   root := `Examples.Demo

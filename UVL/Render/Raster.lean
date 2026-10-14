@@ -425,6 +425,22 @@ def strokeShape (ctx : Ctx w h) (fb : FrameBuffer w h) (s : Shape) (width : Floa
       fun p => SDF.segment p a b - width / 2.0
   | .path .. => fb
 
+/-- MSDF glyphs: for every pixel of a glyph's cell, `MSDF.sample` at the
+pixel center (in ems, through the inverse transform), turned into coverage at
+the glyph's device size. The GPU kernel performs the same operations. -/
+def drawGlyphs (fb : FrameBuffer w h) (ctx : Ctx w h) (atlas : MSDF.Atlas)
+    (quads : Array MSDF.GlyphQuad) (paint : Paint) : FrameBuffer w h :=
+  let inv := ctx.m.inverse
+  let scale := ctx.m.scaleFactor
+  quads.foldl (init := fb) fun fb q =>
+    let c := atlas.cell q.glyph
+    if c.w <= 0 then fb else
+    let tex := atlas.glyphTexels q.glyph
+    let px := q.size * scale
+    fillCoverage fb ctx ((ctx.m.mapRect (atlas.quadRect q)).inflate 1.0) paint fun p =>
+      let l := inv.apply p
+      MSDF.coverage (MSDF.sample tex 0 c ((l.x - q.x) / q.size) ((l.y - q.y) / q.size)) px
+
 partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → FrameBuffer w h
   | .fill (.path p rule) paint => fillPolys fb ctx (p.flatten ctx.m) rule paint
   | .fill s paint =>
@@ -445,6 +461,7 @@ partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → Frame
     fillSDF fb ctx r (.solid c) (fun p => SDF.roundedBox p rc hs (.all radius))
       (blur * ctx.m.scaleFactor)
   | .text pos s scale c => drawText fb ctx pos s scale c
+  | .glyphs atlas quads paint => drawGlyphs fb ctx atlas quads paint
   | .transform m ops => ops.foldl (renderOp { ctx with m := ctx.m.compose m }) fb
   | .clip r ops => ops.foldl (renderOp { ctx with clip := ctx.clipTo (ctx.m.mapRect r) }) fb
   | .group ops => ops.foldl (renderOp ctx) fb

@@ -63,3 +63,25 @@ def main (args : List String) : IO Unit := do
     cnt := cnt + (GPU.Batch.build w h ops).count
   let t1 ← IO.monoNanosNow
   IO.println s!"dashboard, layout + GPU lowering: {(t1 - t0).toF / n.toF / 1e6} ms/frame"
+  -- TrueType text: MSDF cell generation (once per glyph), then frames of text
+  let font ← opaqueId (Text.uvlSans ())
+  let paths := font.glyphs.map (·.path)
+  let t0 ← IO.monoNanosNow
+  let mut acc := 0.0
+  for g in [36:56] do
+    let p ← opaqueId paths[g]!
+    acc := acc + (MSDF.generate p (MSDF.cellOf p))[100]!
+  let t1 ← IO.monoNanosNow
+  IO.println s!"MSDF cell generation: {(t1 - t0).toF / 20 / 1e6} ms/glyph ({acc})"
+  let para := String.join (List.replicate 12 "The quick brown fox jumps over the lazy dog. ")
+  let lines := Text.wrap font para 14 760
+  let msdfOps := Text.linesOpsMSDF font lines 14 (.solid Color.black) ⟨20, 20⟩
+  let outlineOps := Text.linesOps font lines 14 Color.black ⟨20, 20⟩
+  s := s + (Raster.render 800 600 msdfOps).data[0]!.toNat -- warm the atlas
+  for (name, ops) in [("outlines", outlineOps), ("MSDF", msdfOps)] do
+    let t0 ← IO.monoNanosNow
+    for i in [0:n / 4 + 1] do
+      let ops ← opaqueId ops
+      s := s + (Raster.render 800 600 ops).data[i]!.toNat
+    let t1 ← IO.monoNanosNow
+    IO.println s!"{para.length} chars of 14 px text ({name}), CPU: {(t1 - t0).toF / (n / 4 + 1).toF / 1e6} ms/frame"

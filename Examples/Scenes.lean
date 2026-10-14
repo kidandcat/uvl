@@ -63,6 +63,17 @@ def dashboard : UI.Widget Unit := ui! pad 20:
             button "Export" (size := 1)
           expanded: lineChart [[3, 5, 4, 8, 7, 11, 10, 14], [1, 2, 4, 3, 6, 5, 8, 9]]
 
+/-- MSDF text: sizes from 10 to 48 px, a rotated line and a gradient fill. -/
+def msdfText : Array RenderOp :=
+  let f := Text.uvlSans ()
+  let sizes : List Float := [10, 13, 16, 22, 32, 48]
+  let (ops, _) := sizes.foldl (init := (#[], 8.0)) fun (ops, y) s =>
+    (ops ++ Text.linesOpsMSDF f #[s!"MSDF {s.toUInt32} px · Ångström"] s
+      (.solid (Color.hex 0x263238)) ⟨10, y⟩, y + s * 1.25)
+  ops ++ #[.transform (Affine.translate 300 222 |>.compose (Affine.rotate (-0.12)))
+    (Text.linesOpsMSDF f #["rotated & scaled"] 26
+      (.linear ⟨0, 0⟩ ⟨220, 0⟩ #[(0, Color.hex 0xD81B60), (1, Color.hex 0x1E88E5)]) ⟨0, 0⟩)]
+
 open UI in
 /-- TrueType text (the bundled UVL Sans) at several sizes, with kerning,
 accents and a wrapped paragraph. -/

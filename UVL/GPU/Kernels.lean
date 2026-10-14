@@ -1,4 +1,5 @@
 import UVL.GPU.WGSL
+import UVL.Render.MSDF
 
 /-!
 # GPU kernels
@@ -14,7 +15,8 @@ color as the CPU rasterizer (`Render/Raster.lean`):
 * filled paths: the scanline rule of `Raster.fillPolys` evaluated per pixel
   (4 sub-scanlines, exact horizontal coverage) over the path's edges;
 * stroked paths: distance to the flattened polyline;
-* text: exact area coverage of the bitmap glyph cells.
+* text: exact area coverage of the bitmap glyph cells;
+* MSDF glyphs: `MSDF.sample` on the atlas buffer (bilinear, median).
 
 Blending is the fixed-function `src-alpha, one-minus-src-alpha`, which is what
 `FrameBuffer.blend` computes over an opaque background.
@@ -33,9 +35,13 @@ def kindShadow : Nat := 1
 def kindPathFill : Nat := 2
 def kindPathStroke : Nat := 3
 def kindGlyph : Nat := 4
+def kindMSDF : Nat := 5
 
 def prims : Buffer := ⟨"prims"⟩
 def data : Buffer := ⟨"data"⟩
+/-- MSDF atlas texels, `MSDF.cellFloats` per glyph at `glyph * cellFloats`. It
+persists across frames: hosts upload each glyph's cell once. -/
+def atlas : Buffer := ⟨"atlas"⟩
 
 def litN (n : Nat) : Expr .f32 := .litF n.toF
 
@@ -247,11 +253,51 @@ def glyphCoverageDef := Fn.def3 "glyph_coverage" .u32 .f32 .f32 .f32 fun base px
           cov.set (cov.get + vy * overlap px (px + 1) (gx + f * sc) (gx + (f + 1) * sc))
   ret (Expr.min cov.get 1)
 
+/-- `MSDF.sample` and `MSDF.coverage`, operation for operation. Slots: 16 atlas
+offset, 17–19 cell origin and texel size (ems), 20–22 pen position and size. -/
+def msdfCoverageDef := Fn.def2 "msdf_coverage" .u32 .v2 .f32 fun base q => do
+  let size ← let_ (field base 22)
+  let u ← let_ ((x q - field base 20) / size)
+  let v ← let_ ((y q - field base 21) / size)
+  let texel ← let_ (field base 19)
+  let last ← let_ (litN (MSDF.cellSize - 1))
+  let tx ← let_ ((u - field base 17) / texel - 0.5)
+  let ty ← let_ ((v - field base 18) / texel - 0.5)
+  let fx ← let_ (floor tx)
+  let fy ← let_ (floor ty)
+  let ax ← let_ (tx - fx)
+  let ay ← let_ (ty - fy)
+  let x0 ← let_ (toU (clamp fx 0 last))
+  let x1 ← let_ (toU (clamp (fx + 1) 0 last))
+  let y0 ← let_ (toU (clamp fy 0 last))
+  let y1 ← let_ (toU (clamp (fy + 1) 0 last))
+  let off ← let_ (toU (field base 16))
+  let n : Expr .u32 := .litU MSDF.cellSize.toUInt32
+  let i00 ← let_ (off + (y0 * n + x0) * 3)
+  let i10 ← let_ (off + (y0 * n + x1) * 3)
+  let i01 ← let_ (off + (y1 * n + x0) * 3)
+  let i11 ← let_ (off + (y1 * n + x1) * 3)
+  let chan (k : Expr .u32) : ShaderM (Expr .f32) := do
+    let v00 ← let_ (load atlas (i00 + k))
+    let v10 ← let_ (load atlas (i10 + k))
+    let v01 ← let_ (load atlas (i01 + k))
+    let v11 ← let_ (load atlas (i11 + k))
+    let top ← let_ (v00 + ax * (v10 - v00))
+    let bot ← let_ (v01 + ax * (v11 - v01))
+    let_ (top + ay * (bot - top))
+  let r ← chan 0
+  let g ← chan 1
+  let b ← chan 2
+  let m ← let_ (Expr.max (Expr.min r g) (Expr.min (Expr.max r g) b))
+  let px ← let_ (size * field base 14)
+  ret (clamp (m * px + 0.5) 0 1)
+
 def shapeCoverage := shapeCoverageDef.2
 def shadowCoverage := shadowCoverageDef.2
 def pathFillCoverage := pathFillCoverageDef.2
 def pathStrokeCoverage := pathStrokeCoverageDef.2
 def glyphCoverage := glyphCoverageDef.2
+def msdfCoverage := msdfCoverageDef.2
 
 /-- Shading of one primitive kind: color (straight alpha, coverage folded into
 alpha) of primitive `i` at the pixel whose center is `p`. `cov` gets the
@@ -277,7 +323,8 @@ def kindShaders : List (Nat × String × (FnDef × (Expr .u32 → Expr .v2 → E
    (kindShadow, "shadow", shadeWith "shade_shadow" fun b q _ _ _ => shadowCoverage b q),
    (kindPathFill, "path_fill", shadeWith "shade_path_fill" fun b _ _ px py => pathFillCoverage b px py),
    (kindPathStroke, "path_stroke", shadeWith "shade_path_stroke" fun b _ p _ _ => pathStrokeCoverage b p),
-   (kindGlyph, "glyph", shadeWith "shade_glyph" fun b _ _ px py => glyphCoverage b px py)]
+   (kindGlyph, "glyph", shadeWith "shade_glyph" fun b _ _ px py => glyphCoverage b px py),
+   (kindMSDF, "msdf", shadeWith "shade_msdf" fun b q _ _ _ => msdfCoverage b q)]
 
 /-- Any primitive: dispatch on its kind (used by the reference renderer). -/
 def shadeDef := Fn.def2 "shade" .u32 .v2 .v4 fun i p => do
@@ -290,7 +337,7 @@ def shadeDef := Fn.def2 "shade" .u32 .v2 .v4 fun i p => do
 def functions : List FnDef :=
   [sdCircleDef.1, sdRoundedBoxDef.1, sdSegmentDef.1, sdEllipseDef.1, erfDef.1, overlapDef.1,
    sampleStopsDef.1, paintAtDef.1, shapeCoverageDef.1, shadowCoverageDef.1,
-   pathFillCoverageDef.1, pathStrokeCoverageDef.1, glyphCoverageDef.1] ++
+   pathFillCoverageDef.1, pathStrokeCoverageDef.1, glyphCoverageDef.1, msdfCoverageDef.1] ++
     kindShaders.map (·.2.2.1) ++ [shadeDef.1]
 
 /-- Bindings and entry points around the generated functions. The vertex stage
@@ -301,6 +348,7 @@ def skeleton : String := "
 @group(0) @binding(0) var<storage, read> prims : array<f32>;
 @group(0) @binding(1) var<storage, read> data : array<f32>;
 @group(0) @binding(2) var<uniform> screen : vec4f;
+@group(0) @binding(3) var<storage, read> atlas : array<f32>;
 
 struct VOut {
   @builtin(position) pos : vec4f,

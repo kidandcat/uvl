@@ -107,6 +107,15 @@ def flatten (path : Path) (m : Affine) : Array Poly := Id.run do
   if cur.size > 1 then out := out.push ⟨cur, false⟩
   return out
 
+/-- Points that bound a path (Bézier curves lie in the hull of their controls). -/
+def controlPoints (p : Path) : Array Vec2 :=
+  p.cmds.foldl (init := #[]) fun acc c =>
+    match c with
+    | .moveTo q | .lineTo q => acc.push q
+    | .quadTo c q => acc.push c |>.push q
+    | .cubicTo c1 c2 q => acc.push c1 |>.push c2 |>.push q
+    | .close => acc
+
 end Path
 
 end UVL

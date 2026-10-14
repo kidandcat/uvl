@@ -21,15 +21,6 @@ the output (also covered by the bit-identity test).
 
 namespace UVL
 
-/-- Points that bound a path (Bézier curves lie in the hull of their controls). -/
-def Path.controlPoints (p : Path) : Array Vec2 :=
-  p.cmds.foldl (init := #[]) fun acc c =>
-    match c with
-    | .moveTo q | .lineTo q => acc.push q
-    | .quadTo c q => acc.push c |>.push q
-    | .cubicTo c1 c2 q => acc.push c1 |>.push c2 |>.push q
-    | .close => acc
-
 namespace Shape
 
 /-- Local-space bounding box of the shape's geometry. -/
@@ -61,6 +52,10 @@ partial def bounds (m : Affine) : RenderOp → Option Rect
     let sc := scale * m.scaleFactor
     let n := s.length.toF
     some (Rect.inflate ⟨o.x, o.y, (n * Font.advance.toF + 1.0) * sc, 8.0 * sc⟩ 2.0)
+  | .glyphs atlas quads _ =>
+    quads.foldl (init := none) fun acc q =>
+      let r := (m.mapRect (atlas.quadRect q)).inflate 2.0
+      some (match acc with | some a => Rect.union a r | none => r)
   | .transform m' ops => boundsAll (m.compose m') ops
   | .clip r ops => (boundsAll m ops).map fun b =>
     -- intersection is contained in both; keep the smaller one cheaply

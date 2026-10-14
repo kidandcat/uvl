@@ -103,11 +103,12 @@ jobs:
         with:
           path: .lake/build/wasm
           key: wasm-${{ hashFiles('lean-toolchain') }}-${{ env.EMSDK_VERSION }}-${{ hashFiles('web/build.sh') }}
-      - name: Build the browser apps (counter, dashboard)
+      - name: Build the browser apps (counter, dashboard, text)
         run: |
           source "$HOME/emsdk/emsdk_env.sh"
           web/build.sh
           UVL_DIST=web/dist-dashboard web/build.sh Examples.DashboardWeb
+          UVL_DIST=web/dist-text web/build.sh Examples.TextWeb
       - name: Browser smoke tests (headless Chromium, WebGPU on lavapipe + Canvas 2D)
         run: |
           sudo apt-get update
@@ -120,6 +121,8 @@ jobs:
           UVL_BACKEND=canvas2d node web/smoke.cjs web/dist web-counter.png
           # a heavier scene on the GPU renderer: paths, gradients, shadows, text
           UVL_STATIC=1 UVL_SIZE=800x600 node web/smoke.cjs web/dist-dashboard web-dashboard.png
+          # TrueType outlines and MSDF glyphs (persistent GPU atlas)
+          UVL_STATIC=1 UVL_SIZE=560x560 node web/smoke.cjs web/dist-text web-text.png
       - uses: actions/upload-artifact@v4
         with:
           name: web-app
@@ -127,3 +130,4 @@ jobs:
             web/dist
             web-counter.png
             web-dashboard.png
+            web-text.png

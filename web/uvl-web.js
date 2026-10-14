@@ -81,6 +81,7 @@ class GPURenderer {
         { binding: 0, visibility: stage, buffer: { type: 'read-only-storage' } },
         { binding: 1, visibility: stage, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: stage, buffer: { type: 'uniform' } },
+        { binding: 3, visibility: stage, buffer: { type: 'read-only-storage' } },
       ],
     });
     const layout = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
@@ -95,6 +96,28 @@ class GPURenderer {
     this.prims = null;
     this.data = null;
     this.scene = null;
+    // MSDF glyph atlas: persists across frames, glyph cells are written once
+    this.atlas = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  }
+
+  /** Apply the atlas updates queued by the wasm module (see web_shell.c). */
+  syncAtlas(mod) {
+    if (mod._uvl_gpu_atlas_reset()) {
+      this.atlas.destroy();
+      this.atlas = this.device.createBuffer({
+        size: Math.max(16, mod._uvl_gpu_atlas_size() * 4),
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+      this.bindGroup = null;
+    }
+    const n = mod._uvl_gpu_atlas_new_count();
+    if (n) {
+      const cf = mod._uvl_gpu_cell_floats();
+      const glyphs = mod.HEAPF32.subarray(mod._uvl_gpu_atlas_new_glyphs() / 4, mod._uvl_gpu_atlas_new_glyphs() / 4 + n);
+      const data = mod.HEAPF32.subarray(mod._uvl_gpu_atlas_new_data() / 4, mod._uvl_gpu_atlas_new_data() / 4 + n * cf);
+      for (let i = 0; i < n; i++) this.device.queue.writeBuffer(this.atlas, glyphs[i] * cf * 4, data, i * cf, cf);
+    }
+    mod._uvl_gpu_atlas_ack();
   }
 
   /** A storage buffer of at least `bytes`, reallocated (and the bind group
@@ -124,6 +147,7 @@ class GPURenderer {
           { binding: 0, resource: { buffer: this.prims } },
           { binding: 1, resource: { buffer: this.data } },
           { binding: 2, resource: { buffer: this.screen } },
+          { binding: 3, resource: { buffer: this.atlas } },
         ],
       });
     }
@@ -386,6 +410,7 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
     if (presenter.name === 'gpu') {
       const scene = gpuScene();
+      presenter.syncAtlas(mod);
       presenter.render(scene, w, h);
       state.prims = scene.count;
     } else {

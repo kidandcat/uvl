@@ -44,7 +44,8 @@ def goldens : List Golden := [
     Image.toPNG (UI.render Examples.dashboard 800 600 (Color.hex 0xF5F7FA))⟩,
   ⟨"counter", 480, 360, fun _ => counterAfterClicks.framePNG⟩,
   ⟨"typography", 460, 280, fun _ =>
-    Image.toPNG (UI.render Examples.typography 460 280 (Color.hex 0xECEFF1))⟩
+    Image.toPNG (UI.render Examples.typography 460 280 (Color.hex 0xECEFF1))⟩,
+  ⟨"msdf", 560, 260, fun _ => Image.toPNG (Raster.render 560 260 Examples.msdfText)⟩
 ]
 
 /-- Max channel difference allowed, and fraction of bytes allowed to differ. -/
