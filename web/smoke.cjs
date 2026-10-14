@@ -7,8 +7,9 @@
 // real mouse event and checks that the app re-rendered, then hovers another
 // button and compares what the GPU drew with the CPU rasterizer.
 // UVL_BACKEND=gpu|webgpu|canvas2d picks the backend (default: gpu),
-// UVL_SIZE=WxH the canvas size, and UVL_STATIC=1 skips the interaction steps
-// (for apps without tap targets).
+// UVL_SIZE=WxH the canvas size, UVL_STATIC=1 skips the interaction steps
+// (for apps without tap targets), and UVL_CONTROLS=1 drives the controls
+// example instead (drag the slider, type in the text field, scroll the list).
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -58,7 +59,45 @@ function diff(a, b) {
     console.log(`backend: ${backend}`);
 
     let hovered = await page.evaluate(() => Array.from(window.uvl.snapshot()));
-    if (!process.env.UVL_STATIC) {
+    if (process.env.UVL_CONTROLS) {
+      const box = await page.locator('#app').boundingBox();
+      // each step must produce a new, different frame
+      const step = async (name, act) => {
+        const before = await page.evaluate(() => Array.from(window.uvl.snapshot()));
+        const f = await page.evaluate(() => window.uvl.state.frames);
+        await act();
+        await page.waitForFunction((n) => window.uvl.state.frames > n, f, { timeout: 10000 });
+        await page.waitForTimeout(200);
+        const after = await page.evaluate(() => Array.from(window.uvl.snapshot()));
+        const changed = diff(before, after);
+        console.log(`${name}: ${changed} bytes changed`);
+        if (!changed) throw new Error(`${name} did not change the frame`);
+      };
+      const at = async (i) => {
+        const c = await page.evaluate((k) => window.uvl.targetCenter(k), i);
+        if (!c) throw new Error(`no target ${i}`);
+        return [box.x + c[0], box.y + c[1]];
+      };
+      const [sx, sy] = await at(0); // slider (drag target)
+      await step('drag the slider', async () => {
+        await page.mouse.move(sx - 60, sy);
+        await page.mouse.down();
+        await page.mouse.move(sx + 70, sy + 40, { steps: 6 }); // captured off the track too
+        await page.mouse.up();
+      });
+      const [tx, ty] = await at(3); // text field (input target)
+      await step('type in the text field', async () => {
+        await page.mouse.click(tx, ty);
+        await page.keyboard.type('Hi UVL');
+        await page.keyboard.press('Backspace');
+      });
+      const [lx, ly] = await at(4); // scroll view
+      await step('scroll the list', async () => {
+        await page.mouse.move(lx, ly);
+        await page.mouse.wheel(0, 150);
+      });
+      hovered = await page.evaluate(() => Array.from(window.uvl.snapshot()));
+    } else if (!process.env.UVL_STATIC) {
       const before = hovered;
       const target = await page.evaluate(() => window.uvl.targetCenter(0));
       if (!target) throw new Error('no tap target');

@@ -45,6 +45,8 @@ def keyOf (code : Nat) : Key :=
   | 0x40000050 => .left
   | 0x40000051 => .down
   | 0x40000052 => .up
+  | 0x4000004A => .home
+  | 0x4000004D => .end_
   | c => if 0x20 ≤ c && c < 0x110000 then .char (Char.ofNat c) else .other c
 
 def buttonOf (b : Float) : MouseButton :=

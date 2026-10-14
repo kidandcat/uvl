@@ -25,6 +25,8 @@ inductive Key where
   | right
   | up
   | down
+  | home
+  | end_
   | other (code : Nat)
 deriving Inhabited, Repr, BEq
 
@@ -33,6 +35,8 @@ inductive Event where
   | pointerDown (x y : Float) (button : MouseButton)
   | pointerUp (x y : Float) (button : MouseButton)
   | pointerLeave
+  /-- Wheel or trackpad scroll, in pixels; positive `dy` scrolls the content up
+  (shows what is further down), like the browser's `deltaY`. -/
   | scroll (dx dy : Float)
   | keyDown (key : Key)
   | keyUp (key : Key)

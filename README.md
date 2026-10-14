@@ -16,6 +16,7 @@ platform only has to provide a *framebuffer* and a stream of events.
 | 4. GPU and browser | Lean runtime + `Init` compiled to WebAssembly with Emscripten, WebGPU presenter with Canvas 2D fallback, DOM events | ✅ |
 | 5. GPU rendering | Typed shader DSL in Lean that emits WGSL, render ops lowered to GPU primitives, SDFs/paths/text evaluated in the fragment shader, one pipeline per primitive kind; browser (WebGPU) and desktop (wgpu-native); output matches the CPU rasterizer | ✅ |
 | 6. Fonts | TrueType parser in Lean, embedded UVL Sans, kerning and wrapping, `label`/`paragraph`; MSDF atlas generated in Lean, persistent on the GPU, identical sampling on CPU and GPU | ✅ |
+| 7. Controls | Pointer capture, keyboard focus, wheel routing; slider, checkbox, text field, scroll view; incremental GPU uploads | ✅ |
 | Bare metal | Tiled rendering (RGB565 / 1-bit, identical to the full frame), C runtime without `libleanrt` tested on ARM Cortex-M3 (QEMU); see [`baremetal/`](baremetal/README.md) | in progress |
 
 ## Quick start
@@ -27,6 +28,7 @@ lake test               # golden image, layout and codec tests
 lake test -- --update   # regenerate the golden images
 lake exe uvl-bench      # rasterizer time per frame
 lake exe uvl-counter    # desktop app (needs SDL3; renders with wgpu-native)
+lake exe uvl-controls   # slider, checkboxes, text field, scroll view
 lake exe uvl-gpu-check  # GPU renderer vs CPU rasterizer, headless
 web/build.sh            # browser app in web/dist (needs Emscripten)
 ```
@@ -142,6 +144,33 @@ GPU frame against the CPU one). `lake exe uvl-gpu-check` renders the example sce
 the GPU and compares them with the CPU rasterizer.
 
 * **Browser:** `web/build.sh` compiles the same app to WebAssembly; see below.
+
+### Stateful controls
+
+`slider`, `checkbox`, `textField` and `scrollView` ([UI/Controls.lean](UVL/UI/Controls.lean))
+keep their state in the model, Elm style: each is drawn from that state and dispatches a
+message with the new state.
+
+```lean
+structure Model where
+  volume : Float := 0.4
+  name : TextInput := {}
+  scroll : Nat := 0
+
+col [ slider m.volume .volume,
+      textField "name" m.name .name (placeholder := "Type your name…") (onSubmit := some .submit),
+      scrollView m.scroll .scrolled (height := 280) (col rows) ]
+```
+
+![controls](Tests/golden/controls.png)
+
+The runtime captures the pointer while a slider is dragged (even off the track), gives the
+keyboard to the focused field (click, Tab, Escape; editing keys, Home/End, Enter), and sends
+the wheel to the scroll view under the pointer. Scroll views are the one node of the placed
+tree whose child may be taller than itself: content is clipped and translated, and only the
+visible part of it can be hit. Underneath are three new target actions (`drag`, `input`,
+`scroll`) next to `tap`, so other controls are a few lines each. Tests drive all of it with
+scripted events, and CI does it with real input in the browser and in an SDL window.
 
 ### Browser (WebAssembly + WebGPU)
 
@@ -302,6 +331,6 @@ Tests/        golden images, test PNG decoder, test driver
 
 ## Next steps
 
-1. Stateful widgets: text field, scrolling, sliders; animations with `tick`.
+1. Animations with `tick` (transitions, a blinking caret), text selection and clipboard.
 2. Faster CPU sampling of MSDF glyphs (today outlines are about 2.5× faster on the CPU;
    MSDF is the better choice on the GPU).

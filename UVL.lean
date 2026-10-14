@@ -23,6 +23,7 @@ import UVL.UI.Basic
 import UVL.UI.DSL
 import UVL.UI.Charts
 import UVL.UI.Label
+import UVL.UI.Controls
 import UVL.App.Event
 import UVL.App.Runtime
 import UVL.App.Host

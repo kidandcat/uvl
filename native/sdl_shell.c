@@ -117,7 +117,8 @@ LEAN_EXPORT lean_obj_res uvl_sdl_poll(lean_obj_arg world) {
     case SDL_EVENT_MOUSE_BUTTON_UP:
       arr = push(arr, 3, e.button.x, e.button.y, e.button.button); break;
     case SDL_EVENT_MOUSE_WHEEL:
-      arr = push(arr, 4, e.wheel.x, e.wheel.y, 0); break;
+      /* notches to pixels, positive = scroll down (Event.scroll) */
+      arr = push(arr, 4, -40.0 * e.wheel.x, -40.0 * e.wheel.y, 0); break;
     case SDL_EVENT_KEY_DOWN:
       arr = push(arr, 5, (double)e.key.key, 0, 0); break;
     case SDL_EVENT_KEY_UP:

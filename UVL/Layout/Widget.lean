@@ -55,6 +55,12 @@ inductive Widget (Msg : Type) where
   | stack (h v : Align) (children : List (Widget Msg))
   /-- Tap target dispatching `msg`; `radius` shapes the hover/press feedback. -/
   | onTap (msg : Msg) (radius : Float) (child : Widget Msg)
+  /-- Drag or input target around `child` (see `Action`). -/
+  | action (a : Action Msg) (child : Widget Msg)
+  /-- Vertical scroll view: `child` is laid out with unbounded height and shown
+  through a viewport no taller than the constraints allow, scrolled by
+  `offset` pixels; the wheel dispatches `onScroll newOffset`. -/
+  | scroll (offset : Nat) (onScroll : Nat → Msg) (child : Widget Msg)
 deriving Inhabited
 
 variable {Msg : Type}
@@ -124,6 +130,9 @@ def flexOf : Widget Msg → Option Nat
   | .expanded f _ => some (Max.max f 1)
   | _ => none
 
+/-- Height available to the content of a scroll view. -/
+def scrollLimit : Nat := 1000000
+
 /-- Lay out `w` under constraints `c`. Total: recursion is on the widget tree. -/
 def layout (w : Widget Msg) (c : Constraints) : Result Msg c :=
   match w with
@@ -152,6 +161,19 @@ def layout (w : Widget Msg) (c : Constraints) : Result Msg c :=
   | .onTap msg radius child =>
     let k := (layout child (c.within c.minW c.maxW c.minH c.maxH)).fitWithin
     finish c (.tap msg radius) k.child.size.w k.child.size.h [k] fun _ => [(0, 0)]
+  | .action a child =>
+    let k := (layout child (c.within c.minW c.maxW c.minH c.maxH)).fitWithin
+    finish c (.action a) k.child.size.w k.child.size.h [k] fun _ => [(0, 0)]
+  | .scroll offset f child =>
+    let r := layout child ⟨c.minW, c.maxW, 0, scrollLimit, c.hw, Nat.zero_le _⟩
+    let s := c.constrain r.size
+    let hw : r.size.w ≤ s.w := by
+      have h := r.ok
+      simp only [Constraints.Admits] at h
+      simp only [s, Constraints.constrain, Constraints.clampN]
+      omega
+    let max := r.size.h - s.h
+    ⟨s, .scroll s (Min.min offset max) max f r.size r.node hw, c.constrain_admits _⟩
   | .expanded _ child => layout child c
   | .stack ha va children =>
     let kids := children.map fun ch => (layout ch (c.within 0 c.maxW 0 c.maxH)).fitWithin

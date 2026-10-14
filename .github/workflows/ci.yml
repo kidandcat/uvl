@@ -51,7 +51,7 @@ jobs:
           build: false
           test: false
       - name: Build the SDL3 window app and the GPU check (fetches wgpu-native)
-        run: lake build uvl-counter uvl-gpu-check
+        run: lake build uvl-counter uvl-controls uvl-gpu-check
         env:
           PKG_CONFIG_PATH: /opt/sdl3/lib/pkgconfig
       - name: Install Vulkan (Mesa lavapipe) and Xvfb
@@ -75,6 +75,10 @@ jobs:
             timeout 60 xvfb-run -a .lake/build/bin/uvl-counter 2>&1 | tee gpu.log
           grep -q "GPU renderer" gpu.log
           test -s counter-window-gpu.png
+          # the controls example: a real click on a checkbox, GPU frame checked against the CPU
+          UVL_MAX_FRAMES=2 UVL_CLICK_TARGET=2 UVL_SCREENSHOT=controls-window-gpu.png \
+            timeout 60 xvfb-run -a .lake/build/bin/uvl-controls 2>&1 | tee controls.log
+          grep -q "0 channels off by more than 2" controls.log
         env:
           SDL_VIDEO_DRIVER: x11
           LD_LIBRARY_PATH: /opt/sdl3/lib
@@ -103,12 +107,13 @@ jobs:
         with:
           path: .lake/build/wasm
           key: wasm-${{ hashFiles('lean-toolchain') }}-${{ env.EMSDK_VERSION }}-${{ hashFiles('web/build.sh') }}
-      - name: Build the browser apps (counter, dashboard, text)
+      - name: Build the browser apps (counter, dashboard, text, controls)
         run: |
           source "$HOME/emsdk/emsdk_env.sh"
           web/build.sh
           UVL_DIST=web/dist-dashboard web/build.sh Examples.DashboardWeb
           UVL_DIST=web/dist-text web/build.sh Examples.TextWeb
+          UVL_DIST=web/dist-controls web/build.sh Examples.ControlsWeb
       - name: Browser smoke tests (headless Chromium, WebGPU on lavapipe + Canvas 2D)
         run: |
           sudo apt-get update
@@ -121,6 +126,9 @@ jobs:
           UVL_BACKEND=canvas2d node web/smoke.cjs web/dist web-counter.png
           # a heavier scene on the GPU renderer: paths, gradients, shadows, text
           UVL_STATIC=1 UVL_SIZE=800x600 node web/smoke.cjs web/dist-dashboard web-dashboard.png
+          # stateful controls with real input: slider drag, typing, wheel (GPU and Canvas 2D)
+          UVL_CONTROLS=1 UVL_SIZE=720x360 node web/smoke.cjs web/dist-controls web-controls-gpu.png
+          UVL_BACKEND=canvas2d UVL_CONTROLS=1 UVL_SIZE=720x360 node web/smoke.cjs web/dist-controls web-controls.png
           # TrueType outlines and MSDF glyphs (persistent GPU atlas)
           UVL_STATIC=1 UVL_SIZE=560x560 node web/smoke.cjs web/dist-text web-text.png
       - uses: actions/upload-artifact@v4
@@ -131,3 +139,4 @@ jobs:
             web-counter.png
             web-dashboard.png
             web-text.png
+            web-controls.png

@@ -9,11 +9,11 @@ package uvl where
 lean_lib UVL
 
 lean_lib Tests where
-  globs := #[.one `Tests.PngDecode, .one `Tests.Tile, .one `Tests.Damage, .one `Tests.GPU, .one `Tests.Text]
+  globs := #[.one `Tests.PngDecode, .one `Tests.Tile, .one `Tests.Damage, .one `Tests.GPU, .one `Tests.Text, .one `Tests.Controls]
 
 lean_lib Examples where
   globs := #[.one `Examples.Scenes, .one `Examples.Counter, .one `Examples.BareMetalCounter,
-    .one `Examples.CounterWeb, .one `Examples.DashboardWeb, .one `Examples.TextWeb]
+    .one `Examples.CounterWeb, .one `Examples.DashboardWeb, .one `Examples.TextWeb, .one `Examples.Controls, .one `Examples.ControlsWeb]
 
 lean_exe «uvl-demo» where
   root := `Examples.Demo
@@ -109,6 +109,11 @@ lean_exe «uvl-gpu-check» where
 
 lean_exe «uvl-counter» where
   root := `Examples.CounterWindow
+  moreLinkObjs := #[sdl_shell.o, gpu_shell.o, sdl3_lib, wgpu_lib]
+  moreLinkArgs := nativeLinkArgs
+
+lean_exe «uvl-controls» where
+  root := `Examples.ControlsWindow
   moreLinkObjs := #[sdl_shell.o, gpu_shell.o, sdl3_lib, wgpu_lib]
   moreLinkArgs := nativeLinkArgs
 

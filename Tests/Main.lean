@@ -5,6 +5,7 @@ import Tests.Tile
 import Tests.Damage
 import Tests.GPU
 import Tests.Text
+import Tests.Controls
 
 /-!
 Test driver (`lake test`).
@@ -27,7 +28,7 @@ structure Golden where
 
 /-- Script of events exercising the counter app. -/
 def clickOn {Model Msg : Type} [BEq Msg] (rt : Runtime Model Msg) (m : Msg) : List Event :=
-  match rt.targets.toList.find? (·.msg == m) with
+  match rt.targets.toList.find? (fun t => t.tapMsg?.any (· == m)) with
   | some t => Runtime.click (t.x + t.w / 2).toF (t.y + t.h / 2).toF
   | none => []
 
@@ -45,7 +46,8 @@ def goldens : List Golden := [
   ⟨"counter", 480, 360, fun _ => counterAfterClicks.framePNG⟩,
   ⟨"typography", 460, 280, fun _ =>
     Image.toPNG (UI.render Examples.typography 460 280 (Color.hex 0xECEFF1))⟩,
-  ⟨"msdf", 560, 260, fun _ => Image.toPNG (Raster.render 560 260 Examples.msdfText)⟩
+  ⟨"msdf", 560, 260, fun _ => Image.toPNG (Raster.render 560 260 Examples.msdfText)⟩,
+  ⟨"controls", 720, 360, fun _ => Tests.Controls.session.framePNG⟩
 ]
 
 /-- Max channel difference allowed, and fraction of bytes allowed to differ. -/
@@ -123,7 +125,7 @@ def appTests : IO Bool := do
   let t2 ← check "counter: history recorded" (rt.model.history == [0, 1, 2, 3, 2, 3, 4])
   -- press on "+" but release outside: no tap
   let rt0 := Runtime.start Examples.Counter.app 480 360
-  let ev := match rt0.targets.toList.find? (·.msg == Examples.Counter.Msg.inc) with
+  let ev := match rt0.targets.toList.find? (fun t => t.tapMsg?.any (· == Examples.Counter.Msg.inc)) with
     | some t => [Event.pointerDown (t.x + 2).toF (t.y + 2).toF .left, .pointerUp 1 1 .left]
     | none => []
   let t3 ← check "press then release elsewhere does not dispatch" ((rt0.simulate ev).model.count == 0)
@@ -153,6 +155,8 @@ def main (args : List String) : IO UInt32 := do
   ok := (← Tests.Tile.run) && ok
   IO.println "partial redraw:"
   ok := (← Tests.Damage.run) && ok
+  IO.println "stateful controls:"
+  ok := (← Tests.Controls.run) && ok
   IO.println "TrueType text:"
   ok := (← Tests.Text.run) && ok
   IO.println "GPU pipeline (interpreted):"

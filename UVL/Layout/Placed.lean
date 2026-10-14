@@ -1,6 +1,7 @@
 import UVL.Layout.Constraints
 import UVL.Render.RenderOp
 import UVL.Render.Font
+import UVL.App.Event
 
 /-!
 # Placed tree
@@ -11,8 +12,12 @@ its parent** (`x + child.w ≤ s.w` and `y + child.h ≤ s.h`). A layout bug can
 therefore never produce a child that paints outside its parent: such a tree
 does not type-check.
 
-`Msg` is the application's message type: interactive nodes (`Visual.tap`) carry
-the message to dispatch when tapped.
+`Msg` is the application's message type: interactive nodes (`Visual.tap`,
+`Visual.action`, scroll views) carry the messages to dispatch.
+
+A scroll view (`Placed.scroll`) is the one node whose child may be taller than
+the node itself: it fits horizontally (proved), and is translated by the scroll
+offset and clipped to the viewport when painted and hit-tested.
 -/
 
 namespace UVL.Layout
@@ -25,6 +30,47 @@ structure Decoration where
   shadow : Option (Float × Color) := none
 deriving Inhabited
 
+/-- Phase of a pointer drag on an `Action.drag` target. -/
+inductive DragPhase where
+  | press
+  | move
+  | release
+deriving Inhabited, BEq, Repr
+
+/-- A pointer event in a target's own coordinates (`x, y` from its top-left
+corner, possibly outside it while dragging) and the target's size. -/
+structure PointerInfo where
+  phase : DragPhase
+  x : Float
+  y : Float
+  w : Float
+  h : Float
+deriving Inhabited, Repr
+
+/-- What a focusable input (`Action.input`) receives. Printable characters come
+as `text`; `key` carries editing keys (arrows, backspace, …). -/
+inductive InputEvent where
+  | focus
+  | blur
+  /-- Pressed at local `(x, y)`. -/
+  | press (x y : Float)
+  | key (k : Key)
+  | text (s : String)
+deriving Inhabited, Repr
+
+/-- Interactive behaviour of a node. -/
+inductive Action (Msg : Type) where
+  /-- Press and release on the target dispatches `msg`. -/
+  | tap (msg : Msg)
+  /-- The pointer is captured from press to release; every phase may dispatch. -/
+  | drag (f : PointerInfo → Option Msg)
+  /-- A focusable input with a stable `id`: keyboard events go to the focused one. -/
+  | input (id : String) (f : InputEvent → Option Msg)
+  /-- A scroll view: wheel deltas move `offset` within `[0, max]`; `f` gets the new offset. -/
+  | scroll (offset max : Nat) (f : Nat → Msg)
+
+instance {Msg : Type} [Inhabited Msg] : Inhabited (Action Msg) := ⟨.tap default⟩
+
 /-- What a node draws behind its children. -/
 inductive Visual (Msg : Type) where
   | none
@@ -34,11 +80,17 @@ inductive Visual (Msg : Type) where
   | custom (draw : Rect → Array RenderOp)
   /-- Tap target: dispatches `msg`; hover/press feedback uses corner `radius`. -/
   | tap (msg : Msg) (radius : Float)
+  /-- Drag or input target (no feedback of its own). -/
+  | action (a : Action Msg)
 deriving Inhabited
 
 mutual
 inductive Placed (Msg : Type) : Size → Type where
   | node (s : Size) (v : Visual Msg) (kids : Kids Msg s) : Placed Msg s
+  /-- A `s`-sized viewport onto `content`, scrolled down by `offset` pixels
+  (at most `max`); wheel events dispatch `f newOffset`. -/
+  | scroll (s : Size) (offset max : Nat) (f : Nat → Msg) (cs : Size) (content : Placed Msg cs)
+      (hw : cs.w ≤ s.w) : Placed Msg s
 
 inductive Kids (Msg : Type) : Size → Type where
   | nil (s : Size) : Kids Msg s
@@ -93,6 +145,8 @@ def Decoration.toOps (d : Decoration) (r : Rect) : Array RenderOp := Id.run do
 structure PointerState where
   pos : Option (Nat × Nat) := none
   pressed : Bool := false
+  /-- Whether tap targets draw hover/press feedback (off while dragging). -/
+  overlay : Bool := true
 deriving Inhabited
 
 def PointerState.inside (p : PointerState) (r : Rect) : Bool :=
@@ -102,7 +156,7 @@ def PointerState.inside (p : PointerState) (r : Rect) : Bool :=
 
 def Visual.toOps (v : Visual Msg) (r : Rect) : Array RenderOp :=
   match v with
-  | .none | .tap .. => #[]
+  | .none | .tap .. | .action _ => #[]
   | .deco d => d.toOps r
   | .text s scale col => #[.clip r #[.text ⟨r.x, r.y⟩ s scale.toF col]]
   | .custom draw => #[.clip r (draw r)]
@@ -111,7 +165,7 @@ def Visual.toOps (v : Visual Msg) (r : Rect) : Array RenderOp :=
 def Visual.overlayOps (v : Visual Msg) (r : Rect) (p : PointerState) : Array RenderOp :=
   match v with
   | .tap _ radius =>
-    if p.inside r then
+    if p.inside r && p.overlay then
       let c := if p.pressed then Color.black.withAlpha 0.18 else Color.white.withAlpha 0.18
       #[.fill (.roundedRect r (.all radius)) c]
     else #[]
@@ -123,6 +177,19 @@ def Placed.toOps {s : Size} (ox oy : Nat) (p : PointerState) : Placed Msg s → 
   | .node s v kids =>
     let r : Rect := ⟨ox.toF, oy.toF, s.w.toF, s.h.toF⟩
     v.toOps r ++ Kids.toOps ox oy p kids ++ v.overlayOps r p
+  | .scroll s offset max _ cs content _ =>
+    let r : Rect := ⟨ox.toF, oy.toF, s.w.toF, s.h.toF⟩
+    -- content coordinates are shifted by `offset`; the pointer only counts inside
+    let p' : PointerState := { p with
+      pos := if p.inside r then p.pos.map fun (x, y) => (x, y + offset) else none }
+    let inner := content.toOps ox oy p'
+    let bar : Array RenderOp :=
+      if max == 0 then #[] else
+      let th := Max.max 16.0 (s.h.toF * s.h.toF / cs.h.toF)
+      let ty := oy.toF + (s.h.toF - th) * offset.toF / max.toF
+      #[.fill (.roundedRect ⟨ox.toF + s.w.toF - 6, ty + 2, 4, th - 4⟩ (.all 2))
+        (Color.black.withAlpha 0.3)]
+    #[.clip r (#[RenderOp.translate 0 (-offset.toF) inner] ++ bar)]
 
 def Kids.toOps {s : Size} (ox oy : Nat) (p : PointerState) : Kids Msg s → Array RenderOp
   | .nil _ => #[]
@@ -135,30 +202,62 @@ mutual
 /-- Absolute rectangles `(x, y, w, h)` of every node, in paint order. -/
 def Placed.rects {s : Size} (ox oy : Nat) : Placed Msg s → List (Nat × Nat × Nat × Nat)
   | .node s _ kids => (ox, oy, s.w, s.h) :: Kids.rects ox oy kids
+  | .scroll s .. => [(ox, oy, s.w, s.h)]
 def Kids.rects {s : Size} (ox oy : Nat) : Kids Msg s → List (Nat × Nat × Nat × Nat)
   | .nil _ => []
   | .cons x y _ child _ _ rest => child.rects (ox + x) (oy + y) ++ Kids.rects ox oy rest
 end
 
-/-- A tap target: absolute rectangle and the message it dispatches. -/
+/-- An interactive target: the absolute rectangle where it can be hit (clipped
+by scroll views), the origin and size of its node (for local coordinates), and
+its action. -/
 structure Target (Msg : Type) where
   x : Nat
   y : Nat
   w : Nat
   h : Nat
-  msg : Msg
+  action : Action Msg
+  /-- Absolute position of the node's top-left corner (above `y` when scrolled). -/
+  ox : Float := x.toF
+  oy : Float := y.toF
+  fw : Nat := w
+  fh : Nat := h
 
 def Target.contains (t : Target Msg) (px py : Nat) : Bool :=
   t.x ≤ px && px < t.x + t.w && t.y ≤ py && py < t.y + t.h
 
+/-- The message of a tap target. -/
+def Target.tapMsg? (t : Target Msg) : Option Msg :=
+  match t.action with
+  | .tap m => some m
+  | _ => none
+
+/-- The id of an input target. -/
+def Target.inputId? (t : Target Msg) : Option String :=
+  match t.action with
+  | .input id _ => some id
+  | _ => none
+
+/-- Shift a target up by `offset` and clip it to the rows `[top, bottom)`;
+`none` when nothing remains visible. -/
+def Target.scrolled (t : Target Msg) (offset top bottom : Nat) : Option (Target Msg) :=
+  let y0 := Max.max t.y (top + offset)
+  let y1 := Min.min (t.y + t.h) (bottom + offset)
+  if y1 ≤ y0 then none
+  else some { t with y := y0 - offset, h := y1 - y0, oy := t.oy - offset.toF }
+
 mutual
-/-- All tap targets, in paint order (later = on top). -/
+/-- All targets, in paint order (later = on top). -/
 def Placed.targets {s : Size} (ox oy : Nat) : Placed Msg s → List (Target Msg)
   | .node s v kids =>
-    let here := match v with
-      | .tap msg _ => [⟨ox, oy, s.w, s.h, msg⟩]
+    let here : List (Target Msg) := match v with
+      | .tap msg _ => [{ x := ox, y := oy, w := s.w, h := s.h, action := .tap msg }]
+      | .action a => [{ x := ox, y := oy, w := s.w, h := s.h, action := a }]
       | _ => []
     here ++ Kids.targets ox oy kids
+  | .scroll s offset max f _ content _ =>
+    { x := ox, y := oy, w := s.w, h := s.h, action := .scroll offset max f } ::
+      (content.targets ox oy).filterMap (·.scrolled offset oy (oy + s.h))
 def Kids.targets {s : Size} (ox oy : Nat) : Kids Msg s → List (Target Msg)
   | .nil _ => []
   | .cons x y _ child _ _ rest => child.targets (ox + x) (oy + y) ++ Kids.targets ox oy rest
@@ -170,6 +269,31 @@ def hitIndex (ts : Array (Target Msg)) (px py : Nat) : Option Nat := Id.run do
   let mut i := 0
   for t in ts do
     if t.contains px py then found := some i
+    i := i + 1
+  return found
+
+/-- Index of the topmost target under `(px, py)` that is not a scroll view
+(what a press or a tap reaches). -/
+def pressIndex (ts : Array (Target Msg)) (px py : Nat) : Option Nat := Id.run do
+  let mut found := none
+  let mut i := 0
+  for t in ts do
+    if t.contains px py then
+      match t.action with
+      | .scroll .. => pure ()
+      | _ => found := some i
+    i := i + 1
+  return found
+
+/-- The innermost scroll view under `(px, py)`. -/
+def scrollIndex (ts : Array (Target Msg)) (px py : Nat) : Option Nat := Id.run do
+  let mut found := none
+  let mut i := 0
+  for t in ts do
+    if t.contains px py then
+      match t.action with
+      | .scroll .. => found := some i
+      | _ => pure ()
     i := i + 1
   return found
 

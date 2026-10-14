@@ -19,6 +19,7 @@ const EV = { move: 1, down: 2, up: 3, scroll: 4, keyDown: 5, keyUp: 6, text: 7, 
 const KEYS = {
   Enter: 0x0d, Escape: 0x1b, Backspace: 0x08, Tab: 0x09, Delete: 0x7f,
   ArrowRight: 0x4000004f, ArrowLeft: 0x40000050, ArrowDown: 0x40000051, ArrowUp: 0x40000052,
+  Home: 0x4000004a, End: 0x4000004d,
 };
 
 function keyCode(e) {
@@ -411,7 +412,11 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     });
     el.addEventListener('pointerup', (e) => push(EV.up, e.offsetX, e.offsetY, button(e)));
     el.addEventListener('pointerleave', () => push(EV.leave));
-    el.addEventListener('wheel', (e) => { e.preventDefault(); push(EV.scroll, e.deltaX, e.deltaY); }, { passive: false });
+    el.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? h : 1; // lines / pages to pixels
+      push(EV.scroll, e.deltaX * k, e.deltaY * k);
+    }, { passive: false });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     el.addEventListener('keydown', (e) => {
       const code = keyCode(e);
