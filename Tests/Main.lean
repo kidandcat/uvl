@@ -36,7 +36,8 @@ def counterAfterClicks : Runtime Examples.Counter.Model Examples.Counter.Msg := 
   let mut rt := Runtime.start Examples.Counter.app 480 360
   for m in [Examples.Counter.Msg.inc, .inc, .inc, .dec, .inc] do
     rt := rt.simulate (clickOn rt m)
-  return rt.simulate [.keyDown (.char '+')]
+  -- the hover feedback has faded in
+  return rt.simulate [.keyDown (.char '+'), .tick 0.2]
 
 def goldens : List Golden := [
   ⟨"primitives", 480, 320, fun _ => Image.toPNG (Raster.render 480 320 Examples.primitives)⟩,

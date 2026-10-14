@@ -17,6 +17,7 @@ platform only has to provide a *framebuffer* and a stream of events.
 | 5. GPU rendering | Typed shader DSL in Lean that emits WGSL, render ops lowered to GPU primitives, SDFs/paths/text evaluated in the fragment shader, one pipeline per primitive kind; browser (WebGPU) and desktop (wgpu-native); output matches the CPU rasterizer | ✅ |
 | 6. Fonts | TrueType parser in Lean, embedded UVL Sans, kerning and wrapping, `label`/`paragraph`; MSDF atlas generated in Lean, persistent on the GPU, identical sampling on CPU and GPU | ✅ |
 | 7. Controls | Pointer capture, keyboard focus, wheel routing; slider, checkbox, text field, scroll view; incremental GPU uploads | ✅ |
+| 8. Animation and editing | Runtime clock, blinking caret, hover fade-in, `Tween` with easing curves; text selection (drag, Shift, Ctrl+A) and the system clipboard on web and desktop | ✅ |
 | Bare metal | Tiled rendering (RGB565 / 1-bit, identical to the full frame), C runtime without `libleanrt` tested on ARM Cortex-M3 (QEMU); see [`baremetal/`](baremetal/README.md) | in progress |
 
 ## Quick start
@@ -171,6 +172,28 @@ tree whose child may be taller than itself: content is clipped and translated, a
 visible part of it can be hit. Underneath are three new target actions (`drag`, `input`,
 `scroll`) next to `tap`, so other controls are a few lines each. Tests drive all of it with
 scripted events, and CI does it with real input in the browser and in an SDL window.
+
+### Animation, selection and clipboard
+
+The runtime keeps a clock from `tick` events and asks the shell for frames only while
+something moves: an app animation (`App.animating`), the blinking caret of the focused field
+(`Widget.blink`), or hover feedback fading in. App animations are ordinary model state:
+a `Tween` ([UI/Tween.lean](UVL/UI/Tween.lean)) eases a number to a target with one of
+the `Easing` curves (quadratic, cubic, back, elastic, …), and retargeting it mid-flight starts
+from the value on screen. The level meter in the controls example follows the slider this way:
+
+```lean
+  | .volume v, m => { m with volume := v, meter := m.meter.to v }
+  | .frame dt, m => { m with meter := m.meter.step dt }
+  …
+  subscriptions := fun e _ => match e with | .tick dt => some (.frame dt) | _ => none
+  animating := fun m => !m.meter.done
+```
+
+Text fields select by dragging, Shift+click, Shift+arrows/Home/End and Ctrl+A (Cmd on macOS);
+typing or pasting replaces the selection. Ctrl+C and Ctrl+X put the selection in
+`Runtime.clipboard`, which shells hand to the system clipboard (the browser's copy event, or
+`SDL_SetClipboardText`); pasted text arrives as one text-input event.
 
 ### Browser (WebAssembly + WebGPU)
 
@@ -331,6 +354,6 @@ Tests/        golden images, test PNG decoder, test driver
 
 ## Next steps
 
-1. Animations with `tick` (transitions, a blinking caret), text selection and clipboard.
+1. Multi-line text areas and word-wise navigation (Ctrl+arrows, double-click to select a word).
 2. Faster CPU sampling of MSDF glyphs (today outlines are about 2.5× faster on the CPU;
    MSDF is the better choice on the GPU).

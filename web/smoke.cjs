@@ -9,7 +9,8 @@
 // UVL_BACKEND=gpu|webgpu|canvas2d picks the backend (default: gpu),
 // UVL_SIZE=WxH the canvas size, UVL_STATIC=1 skips the interaction steps
 // (for apps without tap targets), and UVL_CONTROLS=1 drives the controls
-// example instead (drag the slider, type in the text field, scroll the list).
+// example instead (drag the slider, type in the text field, select, copy and
+// paste, scroll the list).
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -91,6 +92,32 @@ function diff(a, b) {
         await page.keyboard.type('Hi UVL');
         await page.keyboard.press('Backspace');
       });
+      await step('select with Shift+Home', () => page.keyboard.press('Shift+Home'));
+      // Ctrl+C reaches the app as keys; the copied text is handed over in the
+      // copy event (synthetic here, in case the native shortcut did not fire one)
+      const copy = async () => {
+        await page.keyboard.press('Control+c');
+        return page.evaluate(() => {
+          const data = new DataTransfer();
+          window.uvl.canvas.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data }));
+          return window.uvl.state.clipboard;
+        });
+      };
+      const copied = await copy();
+      console.log(`copy: ${JSON.stringify(copied)}`);
+      if (copied !== 'Hi UV') throw new Error(`copied ${JSON.stringify(copied)}, expected "Hi UV"`);
+      await step('paste', async () => {
+        await page.keyboard.press('End');
+        await page.evaluate(() => {
+          const data = new DataTransfer();
+          data.setData('text/plain', ' & Lean!');
+          window.uvl.canvas.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data }));
+        });
+      });
+      await page.keyboard.press('Control+a');
+      const all = await copy();
+      console.log(`select all + copy: ${JSON.stringify(all)}`);
+      if (all !== 'Hi UV & Lean!') throw new Error(`copied ${JSON.stringify(all)} after pasting`);
       const [lx, ly] = await at(4); // scroll view
       await step('scroll the list', async () => {
         await page.mouse.move(lx, ly);

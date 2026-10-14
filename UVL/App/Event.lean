@@ -27,6 +27,10 @@ inductive Key where
   | down
   | home
   | end_
+  /-- Either Shift key (tracked by the runtime as a modifier). -/
+  | shift
+  /-- Either Ctrl key, or Cmd on macOS (tracked by the runtime as a modifier). -/
+  | ctrl
   | other (code : Nat)
 deriving Inhabited, Repr, BEq
 

@@ -22,6 +22,7 @@ namespace UVL.SDL
 @[extern "uvl_sdl_wait"] opaque wait (timeoutMs : UInt32) : IO Unit
 @[extern "uvl_sdl_ticks"] opaque ticksMs : IO UInt64
 @[extern "uvl_sdl_close"] opaque close : IO Unit
+@[extern "uvl_sdl_set_clipboard"] opaque setClipboard (text : @& String) : IO Unit
 /-- Push a synthetic left click into SDL's event queue (for smoke tests). -/
 @[extern "uvl_sdl_push_click"] opaque pushClick (x y : Float) : IO Unit
 /-- Create the GPU renderer on the window; `false` means CPU frames. -/
@@ -67,6 +68,9 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
     let now ← ticksMs
     let mut rt := rt.step raw (now - last).toNat.toF
     if rt.quit then finish rt; return
+    let (copied, rt') := rt.takeClipboard
+    rt := rt'
+    if let some text := copied then setClipboard text
     let mut frames := frames
     if rt.dirty then
       if gpu then
@@ -82,7 +86,10 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
             pushClick (t.x + t.w / 2).toF (t.y + t.h / 2).toF
     if let some m := maxFrames then
       if frames ≥ m then finish rt; return
-    if !app.animating rt.model then wait 250 else wait 1
+    -- a blinking caret alone only needs a frame every half period
+    if rt.app.animating rt.model || rt.hoverFade < 1 then wait 1
+    else if rt.animating then wait 50
+    else wait 250
     loop rt now frames
   loop (Runtime.start app w h) (← ticksMs) 0
 

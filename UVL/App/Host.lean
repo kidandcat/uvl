@@ -24,7 +24,15 @@ form that crosses a C ABI easily:
   | 10   | pointer leave|                       |
 
   Keycodes follow SDL: printable keys are their codepoint, arrows are
-  `0x4000004F` (right) to `0x40000052` (up).
+  `0x4000004F` (right) to `0x40000052` (up), Shift is `0x400000E1` and Ctrl
+  (or Cmd) `0x400000E0`. Consecutive text events are merged into one
+  `textInput`, so pasted text (delivered one codepoint per event) is a single
+  edit.
+
+* **Clipboard.** After a step, the shell takes the text to copy with
+  `uvl_host_take_clipboard` and puts it on the system clipboard. Pasting is
+  the shell's job: it turns Ctrl+V (or the browser's paste event) into text
+  events.
 
 * **`AnyRuntime`**, a runtime with its model and message types hidden, plus
   `@[export]`ed `step`/`frame` functions so a C shell can drive any app
@@ -47,6 +55,8 @@ def keyOf (code : Nat) : Key :=
   | 0x40000052 => .up
   | 0x4000004A => .home
   | 0x4000004D => .end_
+  | 0x400000E1 | 0x400000E5 => .shift
+  | 0x400000E0 | 0x400000E4 | 0x400000E3 | 0x400000E7 => .ctrl
   | c => if 0x20 ≤ c && c < 0x110000 then .char (Char.ofNat c) else .other c
 
 def buttonOf (b : Float) : MouseButton :=
@@ -76,7 +86,10 @@ def decodeEvents (raw : FloatArray) : Array Event := Id.run do
       | 9 => some .quit
       | 10 => some .pointerLeave
       | _ => none
-    if let some e := ev then out := out.push e
+    match ev, out.back? with
+    | some (.textInput s), some (Event.textInput t) => out := out.pop.push (.textInput (t ++ s))
+    | some e, _ => out := out.push e
+    | none, _ => pure ()
   return out
 
 namespace Runtime
@@ -84,12 +97,10 @@ namespace Runtime
 variable {Model Msg : Type}
 
 /-- One shell iteration: apply the packed events, then advance animations by
-`dtMs` milliseconds when the app is animating. -/
+`dtMs` milliseconds when anything is animating (`Runtime.animating`). -/
 def step (rt : Runtime Model Msg) (raw : FloatArray) (dtMs : Float) : Runtime Model Msg :=
   let rt := (decodeEvents raw).foldl handle rt
-  if rt.app.animating rt.model then
-    { rt.handle (.tick (dtMs / 1000.0)) with dirty := true }
-  else rt
+  if rt.animating then rt.handle (.tick (dtMs / 1000.0)) else rt
 
 end Runtime
 
@@ -155,6 +166,13 @@ def background (r : AnyRuntime) : FloatArray :=
 switches between GPU and CPU rendering). -/
 @[export uvl_host_invalidate]
 def invalidate (r : AnyRuntime) : AnyRuntime := ⟨{ r.rt with dirty := true, presented := none }⟩
+
+/-- Text to put on the system clipboard (`""` for none), and the runtime with
+it cleared. Returns a pair so the C shell can keep the runtime unshared. -/
+@[export uvl_host_take_clipboard]
+def takeClipboard (r : AnyRuntime) : String × AnyRuntime :=
+  let (c, rt) := r.rt.takeClipboard
+  (c.getD "", ⟨rt⟩)
 
 @[export uvl_host_mark_clean]
 def markClean (r : AnyRuntime) : AnyRuntime := ⟨{ r.rt with dirty := false }⟩

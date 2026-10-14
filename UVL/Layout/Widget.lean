@@ -61,6 +61,9 @@ inductive Widget (Msg : Type) where
   through a viewport no taller than the constraints allow, scrolled by
   `offset` pixels; the wheel dispatches `onScroll newOffset`. -/
   | scroll (offset : Nat) (onScroll : Nat → Msg) (child : Widget Msg)
+  /-- `child` is shown only in the "on" half of the runtime's blink cycle (which
+  restarts on every keyboard event, so a caret stays visible while typing). -/
+  | blink (child : Widget Msg)
 deriving Inhabited
 
 variable {Msg : Type}
@@ -161,6 +164,9 @@ def layout (w : Widget Msg) (c : Constraints) : Result Msg c :=
   | .onTap msg radius child =>
     let k := (layout child (c.within c.minW c.maxW c.minH c.maxH)).fitWithin
     finish c (.tap msg radius) k.child.size.w k.child.size.h [k] fun _ => [(0, 0)]
+  | .blink child =>
+    let k := (layout child (c.within c.minW c.maxW c.minH c.maxH)).fitWithin
+    finish c .blink k.child.size.w k.child.size.h [k] fun _ => [(0, 0)]
   | .action a child =>
     let k := (layout child (c.within c.minW c.maxW c.minH c.maxH)).fitWithin
     finish c (.action a) k.child.size.w k.child.size.h [k] fun _ => [(0, 0)]

@@ -40,7 +40,8 @@ def session : RT := Id.run do
     let (x, y) := ((t.x + 20).toF, (t.y + t.h / 2).toF)
     rt := rt.simulate (Runtime.click x y ++ [.textInput "L", .textInput "e", .textInput "a",
       .textInput "n", .textInput " ", .textInput "4"])
-  return rt
+  -- the level meter settles; the caret is in the "on" half of its blink
+  return rt.simulate [.tick 0.5]
 
 def run : IO Bool := do
   let mut ok := true
@@ -58,6 +59,24 @@ def run : IO Bool := do
     (b.model.volume == 1 && b.captured.isSome && !b.pointerState.overlay)) && ok
   let c := b.simulate [.pointerUp (x1 + 300) (y + 200) .left, .pointerMove (x0 + 10) y]
   ok := (← check "slider: release ends the capture" (c.model.volume == 1 && c.captured.isNone)) && ok
+  -- the level meter tweens towards the volume
+  let m0 := c.model.meter
+  let m1 := (c.simulate [.tick 0.1]).model.meter
+  let settled := c.simulate [.tick 0.1, .tick 0.1, .tick 0.1, .tick 0.15]
+  ok := (← check s!"tween: the meter eases to the volume ({m0.value} → {m1.value} → {settled.model.meter.value})"
+    (c.animating && m0.value < m1.value && m1.value < 1 && settled.model.meter.value == 1 &&
+      !settled.animating)) && ok
+  let easings := [Easing.linear, .inQuad, .outQuad, .inOutQuad, .inCubic, .outCubic, .inOutCubic,
+    .outBack, .outElastic]
+  ok := (← check "easing: every curve maps 0 to 0 and 1 to 1"
+    (easings.all fun e => (e.apply 0).abs < 1.0e-9 && (e.apply 1 - 1).abs < 1.0e-9)) && ok
+  ok := (← check "easing: outBack overshoots, outCubic does not"
+    (Easing.outBack.apply 0.7 > 1 && Easing.outCubic.apply 0.7 < 1)) && ok
+  let tw := (Tween.at 0 1 .linear).to 1 |>.step 0.5
+  let tw2 := tw.to 0
+  ok := (← check "tween: retargeting starts from the current value"
+    ((tw.value - 0.5).abs < 1.0e-9 && (tw2.value - 0.5).abs < 1.0e-9 &&
+      ((tw2.step 1).value).abs < 1.0e-9)) && ok
   -- checkboxes
   let taps := rt.targets.filter fun t => (t.tapMsg?.map fun | .toggle _ => true | _ => false).getD false
   let rt2 := match taps[1]? with
@@ -81,6 +100,60 @@ def run : IO Bool := do
   ok := (← check "text field: clicking elsewhere blurs" (!t4.model.name.focused && t4.focus.isNone)) && ok
   let t5 := t1.simulate (Runtime.click (f.x + 2).toF fy)
   ok := (← check "text field: a click places the cursor" (t5.model.name.cursor == 0)) && ok
+  -- caret blink and hover fade (runtime clock)
+  let b0 := rt.simulate (Runtime.click fx fy)
+  let b1 := b0.simulate [.tick 0.3]
+  let b2 := b1.simulate [.tick 0.3]
+  ok := (← check "caret: blinks off after half a period, frame changes"
+    (b0.blinkOn && b1.blinkOn && !b2.blinkOn && b2.dirty && b0.animating &&
+      b1.frame == b0.frame && b2.frame != b1.frame)) && ok
+  let b3 := b2.simulate [.textInput "z"]
+  ok := (← check "caret: typing restarts the blink" (b3.blinkOn && b3.model.name.text == "z")) && ok
+  ok := (← check "caret: nothing animates without focus" (!rt.animating)) && ok
+  let some cb := taps[0]? | check "checkbox target" false
+  let h0 := rt.simulate [.pointerMove (cb.x + 5).toF (cb.y + 5).toF]
+  let h1 := h0.simulate [.tick 0.06]
+  let h2 := h1.simulate [.tick 0.1]
+  ok := (← check s!"hover: feedback fades in ({h0.hoverFade} → {h1.hoverFade} → {h2.hoverFade})"
+    (h0.hoverFade == 0 && h0.animating && h1.hoverFade > 0.4 && h1.hoverFade < 0.6 &&
+      h2.hoverFade == 1 && !h2.animating && h1.frame != h0.frame && h2.frame != h1.frame)) && ok
+  -- selection and clipboard
+  let typed := rt.simulate (Runtime.click fx fy ++ [.textInput "hello world"])
+  let s1 := typed.simulate [.keyDown .shift, .keyDown .left, .keyDown .left, .keyDown .left,
+    .keyDown .left, .keyDown .left, .keyUp .shift]
+  ok := (← check s!"selection: Shift+Left extends (\"{s1.model.name.selectedText}\")"
+    (s1.model.name.selectedText == "world" && s1.model.name.cursor == 6)) && ok
+  let s2 := s1.simulate [.keyDown .ctrl, .keyDown (.char 'c'), .keyUp .ctrl]
+  ok := (← check "clipboard: Ctrl+C copies the selection"
+    (s2.clipboard.any (· == "world") && s2.model.name.text == "hello world")) && ok
+  let (copied, s2') := s2.takeClipboard
+  ok := (← check "clipboard: the shell takes the text once"
+    (copied.any (· == "world") && s2'.clipboard.isNone)) && ok
+  let s3 := s2'.simulate [.keyDown .ctrl, .keyDown (.char 'x'), .keyUp .ctrl]
+  ok := (← check s!"clipboard: Ctrl+X cuts (\"{s3.model.name.text}\")"
+    (s3.clipboard.any (· == "world") && s3.model.name.text == "hello " &&
+      s3.model.name.selection?.isNone)) && ok
+  let s4 := s3.simulate [.keyDown .home, .textInput "say "]
+  ok := (← check s!"clipboard: pasted text is inserted as one edit (\"{s4.model.name.text}\")"
+    (s4.model.name.text == "say hello " && s4.model.name.cursor == 4)) && ok
+  let s5 := s4.simulate [.keyDown .ctrl, .keyDown (.char 'a'), .keyUp .ctrl, .textInput "X"]
+  ok := (← check "selection: Ctrl+A then typing replaces everything" (s5.model.name.text == "X")) && ok
+  let s6 := s1.simulate [.keyDown .right]
+  ok := (← check "selection: Right collapses to the end"
+    (s6.model.name.selection?.isNone && s6.model.name.cursor == 11)) && ok
+  let s7 := s1.simulate [.keyDown .backspace]
+  ok := (← check "selection: Backspace deletes it" (s7.model.name.text == "hello ")) && ok
+  let some f' := find typed isInput | check "text field target" false
+  let x0' := (f'.x + 10).toF
+  let d1 := typed.simulate [.pointerMove x0' fy, .pointerDown x0' fy .left,
+    .pointerMove (x0' + 30) fy, .pointerMove (x0' + 1000) fy, .pointerUp (x0' + 1000) fy .left]
+  ok := (← check s!"selection: dragging selects (\"{d1.model.name.selectedText}\")"
+    (d1.model.name.selectedText == "hello world")) && ok
+  let d2 := typed.simulate ([.keyDown .home] ++ [.keyDown .shift] ++
+    Runtime.click (f'.x + f'.w - 12).toF fy ++ [.keyUp .shift])
+  ok := (← check "selection: Shift+click extends" (d2.model.name.selectedText == "hello world")) && ok
+  let d3 := s1.simulate (Runtime.click 5 5)
+  ok := (← check "selection: blur clears it" (d3.model.name.selection?.isNone)) && ok
   -- scroll view
   let some sv := find rt isScroll | check "scroll target" false
   let (sx, sy) := ((sv.x + 50).toF, (sv.y + 50).toF)
@@ -104,7 +177,8 @@ def run : IO Bool := do
   -- partial redraw stays exact through drags, typing and scrolling
   let script : List Event := [.pointerMove (x0 + 40) y, .pointerDown (x0 + 40) y .left,
     .pointerMove (x0 + 90) y, .pointerUp (x0 + 90) y .left] ++ Runtime.click fx fy ++
-    [.textInput "h", .textInput "i", .keyDown .left, .pointerMove sx sy, .scroll 0 37,
+    [.textInput "h", .textInput "i", .keyDown .left, .tick 0.6, .keyDown .shift, .keyDown .home,
+     .keyUp .shift, .tick 0.6, .textInput "o", .pointerMove sx sy, .tick 0.05, .scroll 0 37,
      .scroll 0 50, .pointerMove sx (sy + 40)] ++ Runtime.click sx (sy + 40)
   let mut rp := start.present
   let mut same := true

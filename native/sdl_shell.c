@@ -120,6 +120,15 @@ LEAN_EXPORT lean_obj_res uvl_sdl_poll(lean_obj_arg world) {
       /* notches to pixels, positive = scroll down (Event.scroll) */
       arr = push(arr, 4, -40.0 * e.wheel.x, -40.0 * e.wheel.y, 0); break;
     case SDL_EVENT_KEY_DOWN:
+      if (e.key.key == SDLK_V && (e.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI))) {
+        /* paste: the clipboard text arrives as text input */
+        char *text = SDL_GetClipboardText();
+        const char *s = text;
+        uint32_t cp; int n;
+        while (s && (n = utf8_next(s, &cp)) > 0) { arr = push(arr, 7, cp, 0, 0); s += n; }
+        SDL_free(text);
+        break;
+      }
       arr = push(arr, 5, (double)e.key.key, 0, 0); break;
     case SDL_EVENT_KEY_UP:
       arr = push(arr, 6, (double)e.key.key, 0, 0); break;
@@ -139,6 +148,11 @@ LEAN_EXPORT lean_obj_res uvl_sdl_poll(lean_obj_arg world) {
     }
   }
   return lean_io_result_mk_ok(arr);
+}
+
+LEAN_EXPORT lean_obj_res uvl_sdl_set_clipboard(b_lean_obj_arg text, lean_obj_arg world) {
+  SDL_SetClipboardText(lean_string_cstr(text));
+  return lean_io_result_mk_ok(lean_box(0));
 }
 
 LEAN_EXPORT lean_obj_res uvl_sdl_present(b_lean_obj_arg rgba, uint32_t w, uint32_t h,

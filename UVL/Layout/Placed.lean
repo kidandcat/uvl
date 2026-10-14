@@ -54,7 +54,17 @@ inductive InputEvent where
   | blur
   /-- Pressed at local `(x, y)`. -/
   | press (x y : Float)
+  /-- The pointer moved to local `(x, y)` while pressed (or Shift+press):
+  extend the selection. -/
+  | drag (x y : Float)
   | key (k : Key)
+  /-- A movement key with Shift held: extend the selection. -/
+  | extend (k : Key)
+  /-- Ctrl+A. -/
+  | selectAll
+  /-- Ctrl+X: the selection was copied to the clipboard, delete it. -/
+  | cut
+  /-- Typed or pasted text. -/
   | text (s : String)
 deriving Inhabited, Repr
 
@@ -64,8 +74,9 @@ inductive Action (Msg : Type) where
   | tap (msg : Msg)
   /-- The pointer is captured from press to release; every phase may dispatch. -/
   | drag (f : PointerInfo → Option Msg)
-  /-- A focusable input with a stable `id`: keyboard events go to the focused one. -/
-  | input (id : String) (f : InputEvent → Option Msg)
+  /-- A focusable input with a stable `id`: keyboard events go to the focused one.
+  `selection` is the selected text, what Ctrl+C / Ctrl+X copy to the clipboard. -/
+  | input (id : String) (f : InputEvent → Option Msg) (selection : String := "")
   /-- A scroll view: wheel deltas move `offset` within `[0, max]`; `f` gets the new offset. -/
   | scroll (offset max : Nat) (f : Nat → Msg)
 
@@ -82,6 +93,9 @@ inductive Visual (Msg : Type) where
   | tap (msg : Msg) (radius : Float)
   /-- Drag or input target (no feedback of its own). -/
   | action (a : Action Msg)
+  /-- Children shown only in the "on" half of the runtime's blink cycle (a
+  text caret). -/
+  | blink
 deriving Inhabited
 
 mutual
@@ -147,6 +161,10 @@ structure PointerState where
   pressed : Bool := false
   /-- Whether tap targets draw hover/press feedback (off while dragging). -/
   overlay : Bool := true
+  /-- Progress `0..1` of the hover feedback fading in. -/
+  hoverFade : Float := 1
+  /-- On half of the blink cycle (`Visual.blink`). -/
+  blinkOn : Bool := true
 deriving Inhabited
 
 def PointerState.inside (p : PointerState) (r : Rect) : Bool :=
@@ -156,7 +174,7 @@ def PointerState.inside (p : PointerState) (r : Rect) : Bool :=
 
 def Visual.toOps (v : Visual Msg) (r : Rect) : Array RenderOp :=
   match v with
-  | .none | .tap .. | .action _ => #[]
+  | .none | .tap .. | .action _ | .blink => #[]
   | .deco d => d.toOps r
   | .text s scale col => #[.clip r #[.text ⟨r.x, r.y⟩ s scale.toF col]]
   | .custom draw => #[.clip r (draw r)]
@@ -166,7 +184,9 @@ def Visual.overlayOps (v : Visual Msg) (r : Rect) (p : PointerState) : Array Ren
   match v with
   | .tap _ radius =>
     if p.inside r && p.overlay then
-      let c := if p.pressed then Color.black.withAlpha 0.18 else Color.white.withAlpha 0.18
+      -- hover fades in (ease out); press feedback is immediate
+      let t := 1 - (1 - p.hoverFade) * (1 - p.hoverFade)
+      let c := if p.pressed then Color.black.withAlpha 0.18 else Color.white.withAlpha (0.18 * t)
       #[.fill (.roundedRect r (.all radius)) c]
     else #[]
   | _ => #[]
@@ -176,7 +196,9 @@ mutual
 def Placed.toOps {s : Size} (ox oy : Nat) (p : PointerState) : Placed Msg s → Array RenderOp
   | .node s v kids =>
     let r : Rect := ⟨ox.toF, oy.toF, s.w.toF, s.h.toF⟩
-    v.toOps r ++ Kids.toOps ox oy p kids ++ v.overlayOps r p
+    match v with
+    | .blink => if p.blinkOn then Kids.toOps ox oy p kids else #[]
+    | _ => v.toOps r ++ Kids.toOps ox oy p kids ++ v.overlayOps r p
   | .scroll s offset max _ cs content _ =>
     let r : Rect := ⟨ox.toF, oy.toF, s.w.toF, s.h.toF⟩
     -- content coordinates are shifted by `offset`; the pointer only counts inside
@@ -235,7 +257,7 @@ def Target.tapMsg? (t : Target Msg) : Option Msg :=
 /-- The id of an input target. -/
 def Target.inputId? (t : Target Msg) : Option String :=
   match t.action with
-  | .input id _ => some id
+  | .input id _ _ => some id
   | _ => none
 
 /-- Shift a target up by `offset` and clip it to the rows `[top, bottom)`;

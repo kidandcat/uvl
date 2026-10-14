@@ -20,6 +20,7 @@ const KEYS = {
   Enter: 0x0d, Escape: 0x1b, Backspace: 0x08, Tab: 0x09, Delete: 0x7f,
   ArrowRight: 0x4000004f, ArrowLeft: 0x40000050, ArrowDown: 0x40000051, ArrowUp: 0x40000052,
   Home: 0x4000004a, End: 0x4000004d,
+  Shift: 0x400000e1, Control: 0x400000e0, Meta: 0x400000e0,
 };
 
 function keyCode(e) {
@@ -425,6 +426,23 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
       if (e.key === 'Tab' || e.key.startsWith('Arrow') || e.key === ' ') e.preventDefault();
     });
     el.addEventListener('keyup', (e) => { const code = keyCode(e); if (code) push(EV.keyUp, code); });
+    // modifiers released while the page was not focused would stay down
+    el.addEventListener('blur', () => { push(EV.keyUp, KEYS.Shift); push(EV.keyUp, KEYS.Control); });
+    // Clipboard. Ctrl+C / Ctrl+X reach the app as keys; the browser then fires
+    // copy / cut, where the copied text is handed over synchronously (no
+    // clipboard permission needed). Pasted text arrives as text input.
+    const copy = (e) => {
+      pump(performance.now());
+      const text = takeClipboard();
+      if (text) { e.clipboardData.setData('text/plain', text); e.preventDefault(); }
+    };
+    el.addEventListener('copy', copy);
+    el.addEventListener('cut', copy);
+    el.addEventListener('paste', (e) => {
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      for (const ch of text) push(EV.text, ch.codePointAt(0));
+      e.preventDefault();
+    });
     resizer.disconnect();
     resizer.observe(el);
   }
@@ -452,7 +470,14 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     state.frames++;
   }
 
-  function frame(now) {
+  function takeClipboard() {
+    const text = mod.UTF8ToString(mod._uvl_take_clipboard());
+    if (text) state.clipboard = text;
+    return text;
+  }
+
+  // apply the queued events, advance animations and draw if needed
+  function pump(now) {
     const n = queue.length / 5;
     if (n > cap) {
       if (buf) mod._free(buf);
@@ -462,14 +487,21 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     if (n) mod.HEAPF64.set(queue, buf / 8);
     queue.length = 0;
     const t0 = performance.now();
-    const r = mod._uvl_step(buf, n, now - last);
-    last = now;
-    if (r === 2) { state.quit = true; return; }
+    const r = mod._uvl_step(buf, n, Math.max(0, now - last));
+    last = Math.max(last, now);
+    if (r === 2) { state.quit = true; return false; }
     if (r === 1) {
       state.leanMs = performance.now() - t0;
       draw();
     }
-    requestAnimationFrame(frame);
+    // copied without a copy event (e.g. the key was not a native shortcut)
+    const text = takeClipboard();
+    if (text) navigator.clipboard?.writeText(text).catch(() => {});
+    return true;
+  }
+
+  function frame(now) {
+    if (pump(now)) requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 

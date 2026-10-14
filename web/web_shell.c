@@ -43,6 +43,7 @@ extern lean_object *uvl_host_gpu_batch(lean_object *r);
 extern lean_object *uvl_host_background(lean_object *r);
 extern lean_object *uvl_host_mark_clean(lean_object *r);
 extern lean_object *uvl_host_invalidate(lean_object *r);
+extern lean_object *uvl_host_take_clipboard(lean_object *r);
 extern lean_object *uvl_gpu_batch_prims(lean_object *b);
 extern lean_object *uvl_gpu_batch_data(lean_object *b);
 extern uint32_t uvl_gpu_batch_count(lean_object *b);
@@ -273,6 +274,20 @@ EMSCRIPTEN_KEEPALIVE const char *uvl_gpu_entry_points_source(void) {
   static lean_object *src = NULL;
   if (!src) src = uvl_gpu_entry_points(lean_box(0));
   return lean_string_cstr(src);
+}
+
+/* Text the app copied (Ctrl+C / Ctrl+X) since the last call, NUL-terminated,
+ * or "" for none. Valid until the next call. */
+EMSCRIPTEN_KEEPALIVE const char *uvl_take_clipboard(void) {
+  static lean_object *text = NULL;
+  if (text) lean_dec_ref(text);
+  lean_object *pair = uvl_host_take_clipboard(g_rt);
+  text = lean_ctor_get(pair, 0);
+  g_rt = lean_ctor_get(pair, 1);
+  lean_inc(text);
+  lean_inc(g_rt);
+  lean_dec_ref(pair);
+  return lean_string_cstr(text);
 }
 
 EMSCRIPTEN_KEEPALIVE double *uvl_damage_ptr(void) { return g_damage; }

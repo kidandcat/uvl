@@ -24,6 +24,7 @@ import UVL.UI.DSL
 import UVL.UI.Charts
 import UVL.UI.Label
 import UVL.UI.Controls
+import UVL.UI.Tween
 import UVL.App.Event
 import UVL.App.Runtime
 import UVL.App.Host

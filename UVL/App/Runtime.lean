@@ -51,6 +51,19 @@ structure Runtime (Model Msg : Type) where
   captured : Option (Target Msg) := none
   /-- Id of the input that receives keyboard events. -/
   focus : Option String := none
+  /-- Seconds of `tick`s received. -/
+  time : Float := 0
+  /-- `time` of the last event delivered to an input (restarts the caret blink). -/
+  inputTime : Float := 0
+  /-- Progress `0..1` of the hover feedback of the hovered target fading in. -/
+  hoverFade : Float := 1
+  /-- Modifier keys held down. -/
+  shift : Bool := false
+  ctrl : Bool := false
+  /-- Text copied (Ctrl+C / Ctrl+X) that the shell should put on the system
+  clipboard, then clear with `takeClipboard`. Pasting needs no runtime support:
+  shells deliver the pasted text as `textInput`. -/
+  clipboard : Option String := none
   /-- A new frame must be presented. -/
   dirty : Bool := true
   quit : Bool := false
@@ -114,9 +127,60 @@ def inputIds (rt : Runtime Model Msg) : Array String :=
 
 /-- Deliver an event to the input `id` (if it is in the view). -/
 def sendInput (rt : Runtime Model Msg) (id : String) (ev : InputEvent) : Runtime Model Msg :=
+  let rt := { rt with inputTime := rt.time, dirty := true }
   match rt.targets.find? (fun t => sameId t.inputId? (some id)) with
-  | some { action := .input _ f, .. } => rt.dispatchOpt (f ev)
+  | some { action := .input _ f _, .. } => rt.dispatchOpt (f ev)
   | _ => rt
+
+/-- The focused input's target. -/
+def focusedTarget (rt : Runtime Model Msg) : Option (Target Msg) :=
+  rt.focus >>= fun id => rt.targets.find? (fun t => sameId t.inputId? (some id))
+
+/-- Copy the focused input's selection to `clipboard`. Returns `none` when
+nothing is selected. -/
+def copySelection (rt : Runtime Model Msg) : Option (Runtime Model Msg) :=
+  match rt.focusedTarget with
+  | some { action := .input _ _ sel, .. } =>
+    if sel.isEmpty then none else some { rt with clipboard := some sel }
+  | _ => none
+
+/-- The pending clipboard text, and the runtime with it cleared. -/
+def takeClipboard (rt : Runtime Model Msg) : Option String × Runtime Model Msg :=
+  (rt.clipboard, { rt with clipboard := none })
+
+/-- Keys that move the cursor (Shift extends the selection with them). -/
+def isMovement : Key → Bool
+  | .left | .right | .up | .down | .home | .end_ => true
+  | _ => false
+
+/-- A key press for the focused input `id`, with modifiers applied. -/
+def keyToInput (rt : Runtime Model Msg) (id : String) (k : Key) : Runtime Model Msg :=
+  if rt.ctrl then
+    match k with
+    | .char 'a' | .char 'A' => rt.sendInput id .selectAll
+    | .char 'c' | .char 'C' => (rt.copySelection).getD rt
+    | .char 'x' | .char 'X' =>
+      match rt.copySelection with
+      | some rt => rt.sendInput id .cut
+      | none => rt
+    | _ => rt
+  else if rt.shift && isMovement k then rt.sendInput id (.extend k)
+  else rt.sendInput id (.key k)
+
+/-- Length of the caret blink cycle, in seconds (on for the first half). -/
+def blinkPeriod : Float := 1.06
+
+/-- Seconds for hover feedback to fade in. -/
+def hoverFadeTime : Float := 0.12
+
+def blinkOn (rt : Runtime Model Msg) : Bool :=
+  let c := (rt.time - rt.inputTime) / blinkPeriod
+  c - c.floor < 0.5
+
+/-- Whether the runtime needs `tick` events: the app animates, a caret blinks
+or hover feedback is fading in. -/
+def animating (rt : Runtime Model Msg) : Bool :=
+  rt.app.animating rt.model || rt.focus.isSome || rt.hoverFade < 1
 
 /-- Move the keyboard focus, telling the old input (`blur`) and the new one
 (`focus`). -/
@@ -150,8 +214,18 @@ def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
         | _ => rt
       | none =>
         let hov := pressIndex rt.targets p.1 p.2
-        { rt with pointer := some p, hovered := hov,
-                  dirty := rt.dirty || !sameTarget hov rt.hovered || rt.pressed.isSome }
+        let changed := !sameTarget hov rt.hovered
+        let rt := { rt with pointer := some p, hovered := hov,
+                            hoverFade := if changed && hov.isSome then 0 else rt.hoverFade,
+                            dirty := rt.dirty || changed || rt.pressed.isSome }
+        -- dragging inside the pressed (and focused) input selects text
+        match rt.pressed >>= (rt.targets[·]?) with
+        | some t =>
+          match t.action with
+          | .input id _ _ =>
+            if sameId rt.focus (some id) then rt.sendInput id (.drag (x - t.ox) (y - t.oy)) else rt
+          | _ => rt
+        | none => rt
     | .pointerLeave =>
       if rt.captured.isSome then rt
       else { rt with pointer := none, hovered := none, dirty := rt.hovered.isSome }
@@ -165,7 +239,10 @@ def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
         | .drag f =>
           let rt := { rt.setFocus none with captured := some t }
           rt.dispatchOpt (f (localInfo t .press x y))
-        | .input id _ => (rt.setFocus (some id)).sendInput id (.press (x - t.ox) (y - t.oy))
+        | .input id _ _ =>
+          let ev : InputEvent := if rt.shift && sameId rt.focus (some id)
+            then .drag (x - t.ox) (y - t.oy) else .press (x - t.ox) (y - t.oy)
+          (rt.setFocus (some id)).sendInput id ev
         | _ => rt.setFocus none
       | none => rt.setFocus none
     | .pointerUp x y .left =>
@@ -194,18 +271,28 @@ def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
           if target == off then rt else rt.dispatch (f target)
         | _ => rt
       | none => rt
+    | .keyDown .shift => { rt with shift := true }
+    | .keyUp .shift => { rt with shift := false }
+    | .keyDown .ctrl => { rt with ctrl := true }
+    | .keyUp .ctrl => { rt with ctrl := false }
     | .keyDown .tab =>
-      if focused then rt.setFocus (rt.nextInput false) else rt
+      if focused then rt.setFocus (rt.nextInput rt.shift) else rt
     | .keyDown .escape =>
       if focused then rt.setFocus none else rt
     | .keyDown k =>
       match rt.focus with
-      | some id => rt.sendInput id (.key k)
+      | some id => rt.keyToInput id k
       | none => rt
     | .textInput s =>
       match rt.focus with
       | some id => rt.sendInput id (.text s)
       | none => rt
+    | .tick dt =>
+      let time := rt.time + dt
+      let blinked := rt.focus.isSome && rt.blinkOn != { rt with time }.blinkOn
+      let fading := rt.hoverFade < 1
+      { rt with time, hoverFade := Min.min 1 (rt.hoverFade + dt / hoverFadeTime),
+                dirty := rt.dirty || blinked || fading || rt.app.animating rt.model }
     | .resize w h => { rt with width := w, height := h }.relayout
     | .quit => { rt with quit := true }
     | _ => rt
@@ -221,7 +308,7 @@ def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
 /-- Hover/press state for painting. -/
 def pointerState (rt : Runtime Model Msg) : PointerState :=
   { pos := rt.pointer, pressed := rt.pressed.isSome && sameTarget rt.pressed rt.hovered,
-    overlay := rt.captured.isNone }
+    overlay := rt.captured.isNone, hoverFade := rt.hoverFade, blinkOn := rt.blinkOn }
 
 /-- The current view as render ops. -/
 def ops (rt : Runtime Model Msg) : Array RenderOp := rt.tree.2.toOps 0 0 rt.pointerState
