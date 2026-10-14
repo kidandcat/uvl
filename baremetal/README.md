@@ -124,3 +124,25 @@ Tests check three things:
 - Fixed-point frames differ from `Float` by at most 1/255 on a handful of edge
   pixels.
 - The Q16 distances match `Float` within 2^-14 px.
+
+## Raspberry Pi Pico (RP2040 / RP2350)
+
+`baremetal/pico/` is a Pico SDK firmware that runs the counter app on an
+ST7789 SPI panel. By default it targets the Waveshare Pico-LCD-2: 320×240,
+with its four keys mapped to up, down, enter and back. The pins, panel size,
+`MADCTL` and tile size are compile definitions in `pico/config.h`. Lean
+renders tile N into one 2 KB buffer while DMA sends tile N-1 from the other.
+
+```sh
+export PICO_SDK_PATH=/path/to/pico-sdk   # SDK 2.x
+baremetal/tools/test.sh                  # also builds .lake/baremetal/pico-{pico,pico2}/uvl_pico.uf2
+```
+
+Flash it by holding BOOTSEL while plugging the board in, then copying
+`uvl_pico.uf2` to the drive that appears. Panic messages and per-frame timing
+go to UART0 at 115200 baud (GP0/GP1).
+
+| Board | Flash (`.text`) | Static RAM (`.bss`, incl. 96 KB pool) |
+| --- | --- | --- |
+| Pico (RP2040, Cortex-M0+) | ~606 KB of 2 MB | ~115 KB of 264 KB |
+| Pico 2 (RP2350, Cortex-M33) | ~581 KB of 4 MB | ~115 KB of 520 KB |

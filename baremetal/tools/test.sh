@@ -5,6 +5,7 @@
 #   2. run the bundle on the host (64-bit, then 32-bit if `gcc -m32` works);
 #   3. cross-compile it for ARM Cortex-M3 and run it under QEMU (if
 #      arm-none-eabi-gcc and qemu-system-arm are installed);
+#   4. cross-compile the Pico / Pico 2 firmware (if PICO_SDK_PATH is set);
 #
 # and check that every build streams frames byte-identical (RGB565) to the
 # native Lean build of the same exported functions.
@@ -63,5 +64,18 @@ if command -v arm-none-eabi-gcc >/dev/null && command -v qemu-system-arm >/dev/n
   if same "$OUT/qemu"; then echo "[ok] ARM frames identical"; else echo "[FAIL] ARM frames differ"; fail=1; fi
 else
   echo "-- skipping ARM/QEMU run (needs arm-none-eabi-gcc and qemu-system-arm)"
+fi
+if [ -n "${PICO_SDK_PATH:-}" ] && command -v arm-none-eabi-gcc >/dev/null; then
+  for board in pico pico2; do
+    echo "== Pico SDK firmware ($board)"
+    cmake -S "$ROOT/baremetal/pico" -B "$OUT/pico-$board" -G Ninja -DPICO_BOARD=$board \
+      -DPICO_SDK_PATH="$PICO_SDK_PATH" -DUVL_BUNDLE="$B" >"$OUT/pico-$board.log" 2>&1 &&
+    cmake --build "$OUT/pico-$board" >>"$OUT/pico-$board.log" 2>&1 &&
+    arm-none-eabi-size "$OUT/pico-$board/uvl_pico.elf" &&
+    echo "[ok] $board firmware: $OUT/pico-$board/uvl_pico.uf2" ||
+    { echo "[FAIL] $board firmware build (see $OUT/pico-$board.log)"; fail=1; }
+  done
+else
+  echo "-- skipping Pico firmware build (set PICO_SDK_PATH)"
 fi
 exit $fail
