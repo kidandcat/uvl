@@ -60,6 +60,11 @@ inductive InputEvent where
   | key (k : Key)
   /-- A movement key with Shift held: extend the selection. -/
   | extend (k : Key)
+  /-- Ctrl (Cmd) with Left/Right (word), Home/End (whole text) or
+  Backspace/Delete (delete a word); `extend` when Shift is held too. -/
+  | word (k : Key) (extend : Bool)
+  /-- A second press at about the same place: select the word there. -/
+  | doubleClick (x y : Float)
   /-- Ctrl+A. -/
   | selectAll
   /-- Ctrl+X: the selection was copied to the clipboard, delete it. -/

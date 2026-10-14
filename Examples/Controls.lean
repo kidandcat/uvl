@@ -1,8 +1,8 @@
 import UVL
 
 /-! Interactive example: stateful controls (slider, checkboxes, text field and
-a scroll view), with all their state in the model (Elm architecture), and a
-level meter that follows the slider with a tween. -/
+a scroll view, a multi-line text area), with all their state in the model (Elm
+architecture), and a level meter that follows the slider with a tween. -/
 
 namespace Examples.Controls
 open UVL UI
@@ -15,6 +15,7 @@ inductive Msg where
   | scrolled (offset : Nat)
   | pick (i : Nat)
   | frame (dt : Float)
+  | notes (st : TextInput)
 
 structure Model where
   volume : Float := 0.4
@@ -25,6 +26,7 @@ structure Model where
   greeted : String := ""
   scroll : Nat := 0
   picked : Option Nat := none
+  notes : TextInput := { text := "UVL draws everything in Lean: layout, text and pixels.\nTry Ctrl+arrows, double-click and Shift+Up." }
 
 def update : Msg → Model → Model
   | .volume v, m => { m with volume := v, meter := m.meter.to v }
@@ -34,6 +36,7 @@ def update : Msg → Model → Model
   | .scrolled o, m => { m with scroll := o }
   | .pick i, m => { m with picked := some i }
   | .frame dt, m => { m with meter := m.meter.step dt }
+  | .notes st, m => { m with notes := st }
 
 def items : List String :=
   (List.range 30).map fun i => s!"Item {i + 1}: " ++
@@ -47,6 +50,9 @@ def meter (v : Float) : UI.Widget Msg :=
       .fill (.roundedRect ⟨r.x, r.y, fill, r.h⟩ (.all 5))
         (.linear ⟨r.x, 0⟩ ⟨r.x + r.w, 0⟩ #[(0, Color.hex 0x43A047), (0.7, Color.hex 0xFDD835),
           (1, Color.hex 0xE53935)])]
+
+def wordCount (s : String) : Nat :=
+  ((s.split fun c => c == ' ' || c == '\n').filter (!·.isEmpty)).length
 
 def view (m : Model) : UI.Widget Msg :=
   pad 20 <| row (gap := 20) (align := .start) [
@@ -66,7 +72,13 @@ def view (m : Model) : UI.Widget Msg :=
       col (gap := 2) (align := .stretch) (items.zipIdx.map fun (s, i) =>
         onTap (.pick i) (radius := 6) <|
           decorated (fill := if m.picked.any (· == i) then some (.solid (Color.hex 0xBBDEFB)) else none)
-            (radius := 6) (padXY 10 6 (label s (size := 14))))
+            (radius := 6) (padXY 10 6 (label s (size := 14)))),
+    card <| col (gap := 10) [
+      label "Notes" (size := 18) (color := Color.hex 0x0D47A1),
+      textArea "notes" m.notes .notes (width := 200) (lines := 9) (size := 15),
+      label s!"{wordCount m.notes.text} words, {m.notes.text.length} characters" (size := 13)
+        (color := Color.hex 0x546E7A)
+    ]
   ]
 
 def app : App Model Msg where

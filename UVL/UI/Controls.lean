@@ -1,4 +1,5 @@
 import UVL.UI.Label
+import UVL.UI.TextEdit
 
 /-!
 # Stateful controls
@@ -68,141 +69,29 @@ def checkbox (checked : Bool) (onToggle : Msg) (text : String := "") (size : Flo
   onTap onToggle (radius := 4) <|
     if text.isEmpty then box else row (gap := 8) [box, label text size]
 
-/-! ### Text field -/
+/-! ### Text field and text area -/
 
-/-- The state of a text field: contents, cursor (in characters), selection
-anchor and focus. The selection runs from `anchor` to `cursor` (either order);
-`anchor = none` means nothing is selected. -/
-structure TextInput where
-  text : String := ""
-  cursor : Nat := 0
-  anchor : Option Nat := none
-  focused : Bool := false
-deriving Inhabited, Repr
-
-namespace TextInput
-
-private def ofChars (cs : List Char) : String := cs.foldl String.push ""
-
-/-- Field-by-field equality (written out: see `Runtime.sameTarget`). -/
-def same (a b : TextInput) : Bool :=
-  a.text == b.text && a.cursor == b.cursor && a.focused == b.focused &&
-    match a.anchor, b.anchor with
-    | some x, some y => x == y
-    | none, none => true
-    | _, _ => false
-
-/-- The selected character range `[start, stop)`, if any. -/
-def selection? (st : TextInput) : Option (Nat × Nat) :=
-  match st.anchor with
-  | some a => if a == st.cursor then none else some (Min.min a st.cursor, Max.max a st.cursor)
-  | none => none
-
-/-- The selected text. -/
-def selectedText (st : TextInput) : String :=
-  match st.selection? with
-  | some (a, b) => ofChars ((st.text.toList.drop a).take (b - a))
-  | none => ""
-
-/-- Delete the selection (if any), leaving the cursor where it was. -/
-def deleteSelection (st : TextInput) : TextInput :=
-  match st.selection? with
-  | some (a, b) =>
-    let cs := st.text.toList
-    { st with text := ofChars (cs.take a ++ cs.drop b), cursor := a, anchor := none }
-  | none => { st with anchor := none }
-
-/-- Pen positions of every cursor position `0..n`, in pixels. -/
-def stops (font : Text.Font) (size : Float) (s : String) : Array Float :=
-  let (gs, w) := Text.shape font s
-  (gs.map (·.x * size)).push (w * size)
-
-/-- Horizontal shift of the contents so that the cursor stays visible in a
-field `inner` pixels wide. -/
-def shift (st : TextInput) (font : Text.Font) (size inner : Float) : Float :=
-  let cx := (stops font size st.text)[st.cursor]?.getD 0
-  Max.max 0 (cx - inner + 2)
-
-/-- The cursor position nearest to `x` pixels from the start of the text. -/
-def cursorAt (font : Text.Font) (size : Float) (s : String) (x : Float) : Nat := Id.run do
-  let ps := stops font size s
-  let mut best := 0
-  for i in [0:ps.size] do
-    if (ps[i]! - x).abs < (ps[best]! - x).abs then best := i
-  return best
-
-/-- Where a movement key takes the cursor, in a text of `n` characters. -/
-def move (c n : Nat) : Key → Nat
-  | .left => c - 1
-  | .right => Min.min n (c + 1)
-  | .home | .up => 0
-  | .end_ | .down => n
-  | _ => c
-
-/-- Apply an input event; `inner` is the width available to the text. -/
-def apply (st : TextInput) (font : Text.Font) (size inner : Float) : InputEvent → TextInput
-  | .focus => { st with focused := true }
-  | .blur => { st with focused := false, anchor := none }
-  | .press x _ =>
-    let c := cursorAt font size st.text (x + st.shift font size inner)
-    { st with cursor := c, anchor := some c }
-  | .drag x _ =>
-    let c := cursorAt font size st.text (x + st.shift font size inner)
-    { st with cursor := c, anchor := some (st.anchor.getD st.cursor) }
-  | .selectAll => { st with anchor := some 0, cursor := st.text.length }
-  | .cut => st.deleteSelection
-  | .text s =>
-    let st := st.deleteSelection
-    let ins := s.toList.filter fun c => c.toNat ≥ 32 && c.toNat != 127
-    let cs := st.text.toList
-    { st with text := ofChars (cs.take st.cursor ++ ins ++ cs.drop st.cursor),
-              cursor := st.cursor + ins.length }
-  | .extend k =>
-    let n := st.text.length
-    let c := Min.min st.cursor n
-    { st with cursor := move c n k, anchor := some (st.anchor.getD c) }
-  | .key k =>
-    let cs := st.text.toList
-    let n := cs.length
-    let c := Min.min st.cursor n
-    match k, st.selection? with
-    | .backspace, some _ | .delete, some _ => st.deleteSelection
-    | .backspace, none =>
-      if c == 0 then st
-      else { st with text := ofChars (cs.take (c - 1) ++ cs.drop c), cursor := c - 1 }
-    | .delete, none =>
-      if c ≥ n then st else { st with text := ofChars (cs.take c ++ cs.drop (c + 1)) }
-    -- with a selection, Left/Right collapse it to its start/end
-    | .left, some (a, _) => { st with cursor := a, anchor := none }
-    | .right, some (_, b) => { st with cursor := b, anchor := none }
-    | k, _ => if isMove k then { st with cursor := move c n k, anchor := none } else st
-where
-  isMove : Key → Bool
-    | .left | .right | .up | .down | .home | .end_ => true
-    | _ => false
-
-end TextInput
-
-/-- A single-line text field with id `id` (for keyboard focus). It dispatches
-`onChange` with the new state on every edit, cursor or selection change and
-focus change, and `onSubmit` on Enter.
-
-Text is selected by dragging, Shift+click, Shift+arrows and Ctrl+A; Ctrl+C,
-Ctrl+X and pasting go through the system clipboard. The caret blinks. -/
-def textField (id : String) (st : TextInput) (onChange : TextInput → Msg)
-    (width : Nat := 240) (size : Float := 16) (placeholder : String := "")
-    (onSubmit : Option Msg := none) (font : Text.Font := Text.uvlSans ())
-    (color : Color := Color.hex 0x1E88E5) : Widget Msg :=
+/-- The editor shared by `textField` and `textArea`: `width × height` pixels,
+text inset by 8 pixels. -/
+def textEditor (id : String) (st : TextInput) (onChange : TextInput → Msg)
+    (width height : Nat) (size : Float) (placeholder : String) (onSubmit : Option Msg)
+    (font : Text.Font) (color : Color) (multiline : Bool) : Widget Msg :=
   let pad := 8.0
-  let inner := width.toFloat - 2 * pad
-  let lineH := font.lineHeight * size
-  let height := (lineH + 2 * pad).ceil.toUInt64.toNat
-  let shift := st.shift font size inner
-  let stops := TextInput.stops font size st.text
-  let px (i : Nat) (r : Rect) := (r.x + pad - shift + stops[i]?.getD 0).round
+  let innerW := width.toFloat - 2 * pad
+  let innerH := height.toFloat - 2 * pad
+  let layout := fun s => TextLayout.make font size s (wrap := multiline) (maxWidth := innerW)
+  let lay := layout st.text
+  let lh := lay.lineHeight
+  let shiftX := if multiline then 0 else Max.max 0 (lay.xOf st.cursor - innerW + 2)
+  let scrollY := if multiline then st.scroll else 0
+  let chars := st.text.toList.toArray
   let clipTo (r : Rect) (ops : Array RenderOp) : Array RenderOp :=
-    #[.clip ⟨r.x + pad - 1, r.y, inner + 2, r.h⟩ ops]
+    #[.clip (if multiline then ⟨r.x + pad - 1, r.y + 2, innerW + 2, r.h - 4⟩
+             else ⟨r.x + pad - 1, r.y, innerW + 2, r.h⟩) ops]
   let field := canvas width height fun r =>
+    let ox := r.x + pad - shiftX
+    let oy := r.y + pad - scrollY
+    let visible (k : Nat) := oy + (k + 1).toFloat * lh > r.y && oy + k.toFloat * lh < r.y + r.h
     let box := r.inflate (-0.5)
     let frame : Array RenderOp :=
       #[.fill (.roundedRect box (.all 6)) Color.white,
@@ -211,27 +100,70 @@ def textField (id : String) (st : TextInput) (onChange : TextInput → Msg)
     let highlight : Array RenderOp := match st.selection? with
       | some (a, b) =>
         let sel := if st.focused then color.withAlpha 0.25 else Color.hex 0xCFD8DC
-        #[.fill (.rect ⟨px a r, r.y + pad, px b r - px a r, lineH⟩) sel]
+        (List.range lay.lines.size).foldl (init := #[]) fun acc k =>
+          let l := lay.lines[k]!
+          let s := Max.max a l.start
+          let e := Min.min b l.stop
+          -- a selected line break shows as a little extra width
+          let nl := if b > l.stop && !l.soft then size * 0.3 else 0
+          if (s > e || (s == e && nl == 0)) || !visible k then acc else
+          let ps := lay.stops[k]!
+          let x0 := (ox + ps[s - l.start]!).round
+          let x1 := (ox + ps[e - l.start]! + nl).round
+          acc.push (.fill (.rect ⟨x0, oy + k.toFloat * lh, x1 - x0, lh⟩) sel)
       | none => #[]
     let textOps :=
       if st.text.isEmpty then
         Text.linesOps font #[placeholder] size (Color.hex 0x90A4AE) ⟨r.x + pad, r.y + pad⟩
-      else Text.linesOps font #[st.text] size (Color.hex 0x263238) ⟨r.x + pad - shift, r.y + pad⟩
+      else (List.range lay.lines.size).foldl (init := #[]) fun acc k =>
+        let l := lay.lines[k]!
+        if !visible k then acc else
+        acc ++ Text.linesOps font #[(chars.extract l.start l.stop).foldl String.push ""] size
+          (Color.hex 0x263238) ⟨ox, oy + k.toFloat * lh⟩
     frame ++ clipTo r (highlight ++ textOps)
   let caret := canvas width height fun r =>
-    clipTo r #[.fill (.rect ⟨px st.cursor r - 0.5, r.y + pad, 1.5, lineH⟩) color]
+    let x := (r.x + pad - shiftX + lay.xOf st.cursor).round
+    clipTo r #[.fill (.rect ⟨x - 0.5, r.y + pad - scrollY + lay.yOf st.cursor, 1.5, lh⟩) color]
   .action (.input id (selection := st.selectedText) fun ev =>
       match ev, onSubmit with
       | .key .enter, some m => some m
       | _, _ =>
-        -- pointer positions relative to the text box
+        -- pointer positions relative to the text
+        let tx (x : Float) := x - pad + shiftX
+        let ty (y : Float) := y - pad + scrollY
         let ev := match ev with
-          | .press x y => .press (x - pad) y
-          | .drag x y => .drag (x - pad) y
+          | .press x y => .press (tx x) (ty y)
+          | .drag x y => .drag (tx x) (ty y)
+          | .doubleClick x y => .doubleClick (tx x) (ty y)
           | ev => ev
-        let st' := st.apply font size inner ev
+        let st' := st.apply layout multiline (if multiline then innerH else 0) ev
         if st'.same st then none else some (onChange st'))
     (if st.focused then .stack .start .start [field, .blink caret] else field)
+
+/-- A single-line text field with id `id` (for keyboard focus). It dispatches
+`onChange` with the new state on every edit, cursor or selection change and
+focus change, and `onSubmit` on Enter.
+
+Text is selected by dragging, double-clicking a word, Shift+click,
+Shift+arrows and Ctrl+A; Ctrl+arrows move by words and Ctrl+Backspace deletes
+one. Ctrl+C, Ctrl+X and pasting go through the system clipboard. The caret
+blinks. -/
+def textField (id : String) (st : TextInput) (onChange : TextInput → Msg)
+    (width : Nat := 240) (size : Float := 16) (placeholder : String := "")
+    (onSubmit : Option Msg := none) (font : Text.Font := Text.uvlSans ())
+    (color : Color := Color.hex 0x1E88E5) : Widget Msg :=
+  let height := (font.lineHeight * size + 16).ceil.toUInt64.toNat
+  textEditor id st onChange width height size placeholder onSubmit font color false
+
+/-- A multi-line text area `lines` lines tall: text wraps at the width and at
+`'\n'` (Enter), Up/Down move between lines, Home/End go to the line's ends
+and Ctrl+Home/End to the text's, and the contents scroll to keep the cursor in
+view. Editing and selection work as in `textField`. -/
+def textArea (id : String) (st : TextInput) (onChange : TextInput → Msg)
+    (width : Nat := 320) (lines : Nat := 4) (size : Float := 16) (placeholder : String := "")
+    (font : Text.Font := Text.uvlSans ()) (color : Color := Color.hex 0x1E88E5) : Widget Msg :=
+  let height := (lines.toFloat * font.lineHeight * size + 16).ceil.toUInt64.toNat
+  textEditor id st onChange width height size placeholder none font color true
 
 /-! ### Scroll view -/
 

@@ -29,7 +29,7 @@ def scenes : List Scene := [
   ⟨"dashboard", 800, 600, Examples.dashboard.toOps 800 600, Color.hex 0xF5F7FA⟩,
   ⟨"typography", 460, 280, Examples.typography.toOps 460 280, Color.hex 0xECEFF1⟩,
   ⟨"msdf", 560, 260, Examples.msdfText, Color.white⟩,
-  ⟨"controls", 720, 360, (Runtime.start Examples.Controls.app 720 360).ops, Color.hex 0xF5F7FA⟩,
+  ⟨"controls", 960, 360, (Runtime.start Examples.Controls.app 960 360).ops, Color.hex 0xF5F7FA⟩,
   counterScene
 ]
 

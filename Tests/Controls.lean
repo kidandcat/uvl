@@ -23,7 +23,7 @@ def isDrag (t : Layout.Target Msg) : Bool := match t.action with | .drag _ => tr
 def isScroll (t : Layout.Target Msg) : Bool := match t.action with | .scroll .. => true | _ => false
 def isInput (t : Layout.Target Msg) : Bool := match t.action with | .input .. => true | _ => false
 
-def start : RT := Runtime.start app 720 360
+def start : RT := Runtime.start app 960 360
 
 /-- The session that also produces the `controls` golden image. -/
 def session : RT := Id.run do
@@ -154,6 +154,50 @@ def run : IO Bool := do
   ok := (← check "selection: Shift+click extends" (d2.model.name.selectedText == "hello world")) && ok
   let d3 := s1.simulate (Runtime.click 5 5)
   ok := (← check "selection: blur clears it" (d3.model.name.selection?.isNone)) && ok
+  -- word navigation and double-click
+  let w0 := typed
+  let w1 := w0.simulate [.keyDown .ctrl, .keyDown .left]
+  let w2 := w1.simulate [.keyDown .left]
+  let w3 := w2.simulate [.keyDown .right]
+  let w4 := w3.simulate [.keyDown .shift, .keyDown .right, .keyUp .shift, .keyUp .ctrl]
+  ok := (← check s!"words: Ctrl+Left/Right ({w1.model.name.cursor}, {w2.model.name.cursor}, {w3.model.name.cursor}), Ctrl+Shift+Right selects (\"{w4.model.name.selectedText}\")"
+    (w1.model.name.cursor == 6 && w2.model.name.cursor == 0 && w3.model.name.cursor == 5 &&
+      w4.model.name.selectedText == " world")) && ok
+  let w5 := w0.simulate [.keyDown .ctrl, .keyDown .backspace, .keyUp .ctrl]
+  ok := (← check s!"words: Ctrl+Backspace deletes a word (\"{w5.model.name.text}\")"
+    (w5.model.name.text == "hello ")) && ok
+  -- "world" starts about 48 px into the text, after the 8 px padding
+  let wx := (f'.x + 8 + 60).toF
+  let dc := w0.simulate (Runtime.click wx fy ++ [.tick 0.1] ++ Runtime.click wx fy)
+  ok := (← check s!"words: double-click selects the word (\"{dc.model.name.selectedText}\")"
+    (dc.model.name.selectedText == "world")) && ok
+  let slow := w0.simulate (Runtime.click wx fy ++ [.tick 0.6] ++ Runtime.click wx fy)
+  ok := (← check "words: two slow clicks are not a double-click" (slow.model.name.selection?.isNone)) && ok
+  -- text area
+  let inputs := rt.targets.filter isInput
+  let some ta := inputs[1]? | check "text area target" false
+  let a0 := rt.simulate (Runtime.click (ta.x + 20).toF (ta.y + 14).toF)
+  let lay := UI.TextLayout.make (Text.uvlSans ()) 15 a0.model.notes.text (wrap := true)
+    (maxWidth := ta.w.toFloat - 16)
+  ok := (← check s!"text area: wraps into {lay.lines.size} lines within the width"
+    (a0.model.notes.focused && lay.lines.size ≥ 4 && (List.range lay.lines.size).all fun k =>
+      (lay.stops[k]!.back!) ≤ ta.w.toFloat - 16 + 15 * 0.3)) && ok
+  let a1 := a0.simulate [.keyDown .ctrl, .keyDown .end_, .keyUp .ctrl]
+  let a2 := a1.simulate [.keyDown .up]
+  ok := (← check "text area: Ctrl+End, then Up moves one line up"
+    (a1.model.notes.cursor == a1.model.notes.text.length &&
+      lay.lineOf a2.model.notes.cursor + 1 == lay.lineOf a1.model.notes.cursor)) && ok
+  let a3 := a1.simulate [.keyDown .enter, .textInput "one", .keyDown .enter, .textInput "two",
+    .keyDown .enter, .textInput "three", .keyDown .enter, .textInput "four", .keyDown .enter,
+    .textInput "five", .keyDown .enter, .textInput "six"]
+  ok := (← check s!"text area: Enter breaks lines and the view scrolls to the cursor ({a3.model.notes.scroll} px)"
+    (a3.model.notes.text.endsWith "\none\ntwo\nthree\nfour\nfive\nsix" && a3.model.notes.scroll > 0)) && ok
+  let a4 := a3.simulate [.keyDown .ctrl, .keyDown .home, .keyUp .ctrl]
+  ok := (← check "text area: Ctrl+Home scrolls back to the top"
+    (a4.model.notes.cursor == 0 && a4.model.notes.scroll == 0)) && ok
+  let a5 := a3.simulate [.keyDown .home, .keyDown .shift, .keyDown .up, .keyUp .shift]
+  ok := (← check s!"text area: Shift+Up selects across lines (\"{a5.model.notes.selectedText}\")"
+    (a5.model.notes.selectedText == "five\n")) && ok
   -- scroll view
   let some sv := find rt isScroll | check "scroll target" false
   let (sx, sy) := ((sv.x + 50).toF, (sv.y + 50).toF)
@@ -179,6 +223,10 @@ def run : IO Bool := do
     .pointerMove (x0 + 90) y, .pointerUp (x0 + 90) y .left] ++ Runtime.click fx fy ++
     [.textInput "h", .textInput "i", .keyDown .left, .tick 0.6, .keyDown .shift, .keyDown .home,
      .keyUp .shift, .tick 0.6, .textInput "o", .pointerMove sx sy, .tick 0.05, .scroll 0 37,
+     .pointerMove (ta.x + 20).toF (ta.y + 14).toF, .pointerDown (ta.x + 20).toF (ta.y + 14).toF .left,
+     .pointerMove (ta.x + 90).toF (ta.y + 60).toF, .pointerUp (ta.x + 90).toF (ta.y + 60).toF .left,
+     .keyDown .ctrl, .keyDown .end_, .keyUp .ctrl, .keyDown .enter, .textInput "a", .keyDown .enter,
+     .textInput "b", .keyDown .enter, .textInput "c", .keyDown .up,
      .scroll 0 50, .pointerMove sx (sy + 40)] ++ Runtime.click sx (sy + 40)
   let mut rp := start.present
   let mut same := true

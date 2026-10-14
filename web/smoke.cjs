@@ -10,7 +10,7 @@
 // UVL_SIZE=WxH the canvas size, UVL_STATIC=1 skips the interaction steps
 // (for apps without tap targets), and UVL_CONTROLS=1 drives the controls
 // example instead (drag the slider, type in the text field, select, copy and
-// paste, scroll the list).
+// paste, double-click, edit the text area, scroll the list).
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -118,6 +118,22 @@ function diff(a, b) {
       const all = await copy();
       console.log(`select all + copy: ${JSON.stringify(all)}`);
       if (all !== 'Hi UV & Lean!') throw new Error(`copied ${JSON.stringify(all)} after pasting`);
+      await step('double-click a word', () => page.mouse.dblclick(tx - 60, ty));
+      // the text area is the last target in paint order
+      let last = 4;
+      while (await page.evaluate((k) => window.uvl.targetCenter(k), last + 1)) last++;
+      const [ax, ay] = await at(last);
+      await step('edit the text area', async () => {
+        await page.mouse.click(ax, ay);
+        await page.keyboard.press('Control+End');
+        await page.keyboard.press('Enter');
+        await page.keyboard.type('Typed in the browser');
+        await page.keyboard.press('Control+Shift+ArrowLeft');
+        await page.keyboard.press('Shift+ArrowUp');
+      });
+      const notes = await copy();
+      console.log(`text area selection: ${JSON.stringify(notes)}`);
+      if (!notes || !notes.endsWith('\nTyped in the browser') || notes.length < 30) throw new Error(`unexpected text area selection ${JSON.stringify(notes)}`);
       const [lx, ly] = await at(4); // scroll view
       await step('scroll the list', async () => {
         await page.mouse.move(lx, ly);

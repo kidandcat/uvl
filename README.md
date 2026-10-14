@@ -17,7 +17,7 @@ platform only has to provide a *framebuffer* and a stream of events.
 | 5. GPU rendering | Typed shader DSL in Lean that emits WGSL, render ops lowered to GPU primitives, SDFs/paths/text evaluated in the fragment shader, one pipeline per primitive kind; browser (WebGPU) and desktop (wgpu-native); output matches the CPU rasterizer | ✅ |
 | 6. Fonts | TrueType parser in Lean, embedded UVL Sans, kerning and wrapping, `label`/`paragraph`; MSDF atlas generated in Lean, persistent on the GPU, identical sampling on CPU and GPU | ✅ |
 | 7. Controls | Pointer capture, keyboard focus, wheel routing; slider, checkbox, text field, scroll view; incremental GPU uploads | ✅ |
-| 8. Animation and editing | Runtime clock, blinking caret, hover fade-in, `Tween` with easing curves; text selection (drag, Shift, Ctrl+A) and the system clipboard on web and desktop | ✅ |
+| 8. Animation and editing | Runtime clock, blinking caret, hover fade-in, `Tween` with easing curves; text selection (drag, double-click, Shift, Ctrl+A), word navigation, the system clipboard on web and desktop; multi-line `textArea` | ✅ |
 | Bare metal | Tiled rendering (RGB565 / 1-bit, identical to the full frame), C runtime without `libleanrt` tested on ARM Cortex-M3 (QEMU); see [`baremetal/`](baremetal/README.md) | in progress |
 
 ## Quick start
@@ -191,7 +191,13 @@ from the value on screen. The level meter in the controls example follows the sl
 ```
 
 Text fields select by dragging, Shift+click, Shift+arrows/Home/End and Ctrl+A (Cmd on macOS);
-typing or pasting replaces the selection. Ctrl+C and Ctrl+X put the selection in
+typing or pasting replaces the selection. Ctrl+Left/Right move by words, Ctrl+Backspace/Delete
+delete one, and a double-click selects the word under the pointer.
+
+`textArea` is the multi-line version ([UI/TextEdit.lean](UVL/UI/TextEdit.lean) holds the
+editing logic both share): text wraps at the width and at Enter, Up/Down keep the horizontal
+position, Home/End go to the ends of the visual line and Ctrl+Home/End to the ends of the
+text, and the contents scroll to keep the cursor in view. Ctrl+C and Ctrl+X put the selection in
 `Runtime.clipboard`, which shells hand to the system clipboard (the browser's copy event, or
 `SDL_SetClipboardText`); pasted text arrives as one text-input event.
 
@@ -354,6 +360,6 @@ Tests/        golden images, test PNG decoder, test driver
 
 ## Next steps
 
-1. Multi-line text areas and word-wise navigation (Ctrl+arrows, double-click to select a word).
+1. Undo/redo for text editing, and wheel scrolling inside text areas.
 2. Faster CPU sampling of MSDF glyphs (today outlines are about 2.5× faster on the CPU;
    MSDF is the better choice on the GPU).

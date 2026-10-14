@@ -57,6 +57,8 @@ structure Runtime (Model Msg : Type) where
   inputTime : Float := 0
   /-- Progress `0..1` of the hover feedback of the hovered target fading in. -/
   hoverFade : Float := 1
+  /-- `time` and position of the last press on an input (double-click detection). -/
+  lastPress : Option (Float × Float × Float) := none
   /-- Modifier keys held down. -/
   shift : Bool := false
   ctrl : Bool := false
@@ -157,6 +159,8 @@ def isMovement : Key → Bool
 def keyToInput (rt : Runtime Model Msg) (id : String) (k : Key) : Runtime Model Msg :=
   if rt.ctrl then
     match k with
+    | .left | .right | .home | .end_ => rt.sendInput id (.word k rt.shift)
+    | .backspace | .delete => rt.sendInput id (.word k false)
     | .char 'a' | .char 'A' => rt.sendInput id .selectAll
     | .char 'c' | .char 'C' => (rt.copySelection).getD rt
     | .char 'x' | .char 'X' =>
@@ -166,6 +170,9 @@ def keyToInput (rt : Runtime Model Msg) (id : String) (k : Key) : Runtime Model 
     | _ => rt
   else if rt.shift && isMovement k then rt.sendInput id (.extend k)
   else rt.sendInput id (.key k)
+
+/-- Longest gap between the presses of a double-click, in seconds. -/
+def doubleClickTime : Float := 0.5
 
 /-- Length of the caret blink cycle, in seconds (on for the first half). -/
 def blinkPeriod : Float := 1.06
@@ -240,8 +247,15 @@ def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
           let rt := { rt.setFocus none with captured := some t }
           rt.dispatchOpt (f (localInfo t .press x y))
         | .input id _ _ =>
-          let ev : InputEvent := if rt.shift && sameId rt.focus (some id)
-            then .drag (x - t.ox) (y - t.oy) else .press (x - t.ox) (y - t.oy)
+          let again := sameId rt.focus (some id) && match rt.lastPress with
+            | some (t0, x0, y0) => rt.time - t0 ≤ doubleClickTime && (x - x0).abs ≤ 4 && (y - y0).abs ≤ 4
+            | none => false
+          let (lx, ly) := (x - t.ox, y - t.oy)
+          let ev : InputEvent :=
+            if rt.shift && sameId rt.focus (some id) then .drag lx ly
+            else if again then .doubleClick lx ly else .press lx ly
+          -- a third press starts over
+          let rt := { rt with lastPress := if again then none else some (rt.time, x, y) }
           (rt.setFocus (some id)).sendInput id ev
         | _ => rt.setFocus none
       | none => rt.setFocus none

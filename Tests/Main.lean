@@ -48,7 +48,7 @@ def goldens : List Golden := [
   ⟨"typography", 460, 280, fun _ =>
     Image.toPNG (UI.render Examples.typography 460 280 (Color.hex 0xECEFF1))⟩,
   ⟨"msdf", 560, 260, fun _ => Image.toPNG (Raster.render 560 260 Examples.msdfText)⟩,
-  ⟨"controls", 720, 360, fun _ => Tests.Controls.session.framePNG⟩
+  ⟨"controls", 960, 360, fun _ => Tests.Controls.session.framePNG⟩
 ]
 
 /-- Max channel difference allowed, and fraction of bytes allowed to differ. -/

@@ -127,8 +127,8 @@ jobs:
           # a heavier scene on the GPU renderer: paths, gradients, shadows, text
           UVL_STATIC=1 UVL_SIZE=800x600 node web/smoke.cjs web/dist-dashboard web-dashboard.png
           # stateful controls with real input: slider drag, typing, wheel (GPU and Canvas 2D)
-          UVL_CONTROLS=1 UVL_SIZE=720x360 node web/smoke.cjs web/dist-controls web-controls-gpu.png
-          UVL_BACKEND=canvas2d UVL_CONTROLS=1 UVL_SIZE=720x360 node web/smoke.cjs web/dist-controls web-controls.png
+          UVL_CONTROLS=1 UVL_SIZE=960x360 node web/smoke.cjs web/dist-controls web-controls-gpu.png
+          UVL_BACKEND=canvas2d UVL_CONTROLS=1 UVL_SIZE=960x360 node web/smoke.cjs web/dist-controls web-controls.png
           # TrueType outlines and MSDF glyphs (persistent GPU atlas)
           UVL_STATIC=1 UVL_SIZE=560x560 node web/smoke.cjs web/dist-text web-text.png
       - uses: actions/upload-artifact@v4
