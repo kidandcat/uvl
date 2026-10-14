@@ -47,6 +47,7 @@ extern lean_object *uvl_gpu_batch_prims(lean_object *b);
 extern lean_object *uvl_gpu_batch_data(lean_object *b);
 extern uint32_t uvl_gpu_batch_count(lean_object *b);
 extern lean_object *uvl_gpu_shader(lean_object *unit);
+extern lean_object *uvl_gpu_entry_points(lean_object *unit);
 
 extern void lean_initialize_runtime_module(void);
 extern void lean_io_mark_end_initialization(void);
@@ -172,6 +173,13 @@ EMSCRIPTEN_KEEPALIVE float *uvl_gpu_background(void) { return g_bg; }
 EMSCRIPTEN_KEEPALIVE const char *uvl_gpu_shader_source(void) {
   static lean_object *src = NULL;
   if (!src) src = uvl_gpu_shader(lean_box(0));
+  return lean_string_cstr(src);
+}
+
+/* Fragment entry point per primitive kind, comma-separated. */
+EMSCRIPTEN_KEEPALIVE const char *uvl_gpu_entry_points_source(void) {
+  static lean_object *src = NULL;
+  if (!src) src = uvl_gpu_entry_points(lean_box(0));
   return lean_string_cstr(src);
 }
 

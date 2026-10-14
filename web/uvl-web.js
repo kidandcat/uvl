@@ -48,9 +48,13 @@ const BLEND = {
   alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
 };
 
+// floats per primitive record (UVL/GPU/Kernels.lean, `primStride`)
+const PRIM_STRIDE = 36;
+
 class GPURenderer {
-  /** Compile the Lean-generated WGSL; throws when it does not compile. */
-  static async create(canvas, device, code) {
+  /** Compile the Lean-generated WGSL (`entries`: fragment entry point per
+   * primitive kind); throws when it does not compile. */
+  static async create(canvas, device, code, entries) {
     const context = canvas.getContext('webgpu');
     if (!context) throw new Error('no webgpu canvas context');
     const module = device.createShaderModule({ code });
@@ -59,10 +63,10 @@ class GPURenderer {
     if (errors.length) {
       throw new Error(`WGSL: ${errors.map((m) => `${m.lineNum}:${m.linePos} ${m.message}`).join('; ')}`);
     }
-    return new GPURenderer(canvas, device, context, module);
+    return new GPURenderer(canvas, device, context, module, entries);
   }
 
-  constructor(canvas, device, context, module) {
+  constructor(canvas, device, context, module, entries) {
     this.name = 'gpu';
     this.device = device;
     this.context = context;
@@ -71,12 +75,22 @@ class GPURenderer {
       device, format: this.format, alphaMode: 'opaque',
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     });
-    this.pipeline = device.createRenderPipeline({
-      layout: 'auto',
-      vertex: { module, entryPoint: 'vs' },
-      fragment: { module, entryPoint: 'fs', targets: [{ format: this.format, blend: BLEND }] },
-      primitive: { topology: 'triangle-list' },
+    const stage = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
+    this.layout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: stage, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: stage, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: stage, buffer: { type: 'uniform' } },
+      ],
     });
+    const layout = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
+    // one pipeline per primitive kind, so fragments only run their kind's code
+    this.pipelines = entries.map((entryPoint) => device.createRenderPipeline({
+      layout,
+      vertex: { module, entryPoint: 'vs' },
+      fragment: { module, entryPoint, targets: [{ format: this.format, blend: BLEND }] },
+      primitive: { topology: 'triangle-list' },
+    }));
     this.screen = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.prims = null;
     this.data = null;
@@ -99,12 +113,13 @@ class GPURenderer {
   /** Draw `scene` ({prims, data: Float32Array, count, bg: [r,g,b,a]}). */
   render(scene, w, h, readback = null) {
     const { device } = this;
-    this.scene = scene;
+    // keep a copy for `readback`: the views on the wasm heap go stale
+    this.scene = scene === this.scene ? scene : { ...scene, prims: scene.prims.slice(), data: scene.data.slice() };
     this.ensure('prims', scene.prims.byteLength);
     this.ensure('data', scene.data.byteLength);
     if (!this.bindGroup) {
       this.bindGroup = device.createBindGroup({
-        layout: this.pipeline.getBindGroupLayout(0),
+        layout: this.layout,
         entries: [
           { binding: 0, resource: { buffer: this.prims } },
           { binding: 1, resource: { buffer: this.data } },
@@ -121,9 +136,17 @@ class GPURenderer {
     const pass = encoder.beginRenderPass({
       colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [r, g, b, 1] }],
     });
-    pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroup);
-    if (scene.count) pass.draw(6, scene.count);
+    // consecutive primitives of the same kind share a draw call (paint order is kept)
+    const { prims, count } = scene;
+    for (let i = 0; i < count;) {
+      const kind = prims[i * PRIM_STRIDE];
+      let j = i + 1;
+      while (j < count && prims[j * PRIM_STRIDE] === kind) j++;
+      pass.setPipeline(this.pipelines[kind]);
+      pass.draw(6, j - i, 0, i);
+      i = j;
+    }
     pass.end();
     if (readback) {
       encoder.copyTextureToBuffer({ texture: target }, { buffer: readback.buffer, bytesPerRow: readback.stride }, [w, h]);
@@ -210,7 +233,7 @@ class WebGPUPresenter {
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       });
       this.bindGroup = device.createBindGroup({
-        layout: this.pipeline.getBindGroupLayout(0),
+        layout: this.layout,
         entries: [{ binding: 0, resource: this.texture.createView() }],
       });
     }
@@ -312,7 +335,8 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
       return null;
     });
     if (device && backend !== 'webgpu') {
-      presenter = await GPURenderer.create(canvas, device, mod.UTF8ToString(mod._uvl_gpu_shader_source()))
+      presenter = await GPURenderer.create(canvas, device, mod.UTF8ToString(mod._uvl_gpu_shader_source()),
+        mod.UTF8ToString(mod._uvl_gpu_entry_points_source()).split(','))
         .catch((e) => { console.warn(`GPU renderer unavailable: ${e.message}`); return null; });
     }
     if (device && !presenter) presenter = WebGPUPresenter.create(canvas, device);

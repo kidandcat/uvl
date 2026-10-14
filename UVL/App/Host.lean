@@ -177,4 +177,9 @@ end GPU.Batch
 /-- WGSL source of the GPU renderer (`GPU/Kernels.lean`). -/
 @[export uvl_gpu_shader] def gpuShader (_ : Unit) : String := GPU.shaderSource
 
+/-- Fragment entry points of the GPU renderer, comma-separated, indexed by
+primitive kind (slot 0 of a record). -/
+@[export uvl_gpu_entry_points] def gpuEntryPoints (_ : Unit) : String :=
+  ",".intercalate GPU.kindEntryPoints
+
 end UVL

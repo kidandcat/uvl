@@ -152,7 +152,8 @@ The counter is a 2 MB `.wasm`. Any app works: export a constructor with
 * **Lowering** ([GPU/Batch.lean](UVL/GPU/Batch.lean)): each render op becomes one primitive (a
   pixel rectangle drawn as two triangles, plus its parameters) or, for paths, one per 8-row
   band carrying only that band's edges. Each primitive covers exactly the pixels the CPU
-  rasterizer would visit, and the GPU blends them in paint order.
+  rasterizer would visit, and the GPU blends them in paint order. Every primitive kind has
+  its own fragment entry point and pipeline; runs of the same kind share a draw call.
 * **Checked without a GPU**: the tests evaluate the generated shader in Lean for every pixel
   ([GPU/Reference.lean](UVL/GPU/Reference.lean)) and get frames **bit-identical** to
   `Raster.render`, and the DSL's SDFs agree with `UVL.SDF`.
