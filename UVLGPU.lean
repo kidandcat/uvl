@@ -20,8 +20,12 @@ opaque initHeadless (wgsl entries : @& String) : IO Bool
 headless or with `readback`, offscreen; then returns the RGBA pixels (empty
 when presenting to a window). -/
 @[extern "uvl_gpu_draw"]
-opaque drawRaw (prims data : @& FloatArray) (count w h : UInt32) (bg : @& FloatArray)
-  (readback : Bool) : IO ByteArray
+opaque drawRaw (prims data primRanges dataRanges : @& FloatArray) (full : Bool)
+  (count w h : UInt32) (bg : @& FloatArray) (readback : Bool) : IO ByteArray
+
+/-- Bytes of primitives and data written to the GPU by the last draw. -/
+@[extern "uvl_gpu_uploaded_bytes"]
+opaque uploadedBytes : IO UInt64
 
 /-- Replace the MSDF atlas buffer by a zeroed one of `floats` floats. -/
 @[extern "uvl_gpu_atlas_reset"]
@@ -58,12 +62,20 @@ def syncAtlas (b : GPU.Batch) : IO Unit := do
       up := up.set! g true
   atlasState.set (a.id + 1, up)
 
+/-- The arrays of the previous frame, now on the GPU: only what changed since
+is written (`Batch.changedRanges`). -/
+initialize lastFrame : IO.Ref (Option (FloatArray × FloatArray)) ← IO.mkRef none
+
 /-- Lower a `w × h` scene and draw it on the GPU. -/
 def draw (w h : Nat) (ops : Array RenderOp) (bg : Color) (readback : Bool := false) :
     IO ByteArray := do
   let b := GPU.Batch.build w h ops
   syncAtlas b
-  drawRaw b.prims b.data b.count.toUInt32 w.toUInt32 h.toUInt32
+  let (pr, dr, full) := match ← lastFrame.get with
+    | some (p, d) => (GPU.Batch.changedRanges p b.prims, GPU.Batch.changedRanges d b.data, false)
+    | none => (.empty, .empty, true)
+  lastFrame.set (some (b.prims, b.data))
+  drawRaw b.prims b.data pr dr full b.count.toUInt32 w.toUInt32 h.toUInt32
     (FloatArray.empty.push bg.r |>.push bg.g |>.push bg.b |>.push bg.a) readback
 
 end UVL.Native.GPU

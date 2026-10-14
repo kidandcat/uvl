@@ -51,6 +51,7 @@ extern uint32_t uvl_gpu_batch_atlas_size(lean_object *b);
 extern lean_object *uvl_gpu_batch_atlas_glyphs(lean_object *b);
 extern lean_object *uvl_gpu_batch_atlas_cell(lean_object *b, uint32_t g);
 extern uint32_t uvl_gpu_atlas_cell_floats(lean_object *unit);
+extern lean_object *uvl_gpu_changed_ranges(lean_object *old, lean_object *new_);
 extern lean_object *uvl_gpu_shader(lean_object *unit);
 extern lean_object *uvl_gpu_entry_points(lean_object *unit);
 
@@ -133,6 +134,21 @@ static void sync_atlas(lean_object *b) {
   lean_dec_ref(gs);
 }
 
+/* The previous frame's arrays: only the ranges that differ from them are
+ * written to the GPU buffers (flattened start/stop pairs, in floats). */
+static lean_object *g_prev_prims = NULL, *g_prev_data = NULL;
+static fbuf g_prim_ranges, g_data_ranges;
+
+static void diff(lean_object **prev, lean_object *cur, fbuf *ranges) {
+  if (!*prev) *prev = lean_alloc_sarray(sizeof(double), 0, 0);
+  lean_inc(cur);
+  lean_object *r = uvl_gpu_changed_ranges(*prev, cur); /* consumes *prev */
+  ranges->len = 0;
+  fpush(ranges, lean_float_array_cptr(r), lean_sarray_size(r));
+  lean_dec_ref(r);
+  *prev = cur; /* keeps our reference */
+}
+
 static void build_gpu(void) {
   lean_inc(g_rt);
   lean_object *b = uvl_host_gpu_batch(g_rt);
@@ -144,8 +160,8 @@ static void build_gpu(void) {
   g_count = uvl_gpu_batch_count(b); /* consumes b */
   to_f32(&g_prims, prims);
   to_f32(&g_data, data);
-  lean_dec_ref(prims);
-  lean_dec_ref(data);
+  diff(&g_prev_prims, prims, &g_prim_ranges);
+  diff(&g_prev_data, data, &g_data_ranges);
   lean_inc(g_rt);
   lean_object *bg = uvl_host_background(g_rt);
   const double *c = lean_float_array_cptr(bg);
@@ -208,7 +224,10 @@ EMSCRIPTEN_KEEPALIVE uint8_t *uvl_frame_ptr(void) { return g_pixels; }
  * produces a complete frame in the new mode. */
 EMSCRIPTEN_KEEPALIVE void uvl_set_gpu(int on) {
   g_gpu = on;
-  g_atlas_id = 0; /* the renderer re-uploads the atlas */
+  g_atlas_id = 0; /* the renderer re-uploads the atlas and the buffers */
+  if (g_prev_prims) lean_dec_ref(g_prev_prims);
+  if (g_prev_data) lean_dec_ref(g_prev_data);
+  g_prev_prims = g_prev_data = NULL;
   g_rt = uvl_host_invalidate(g_rt);
 }
 
@@ -224,6 +243,11 @@ EMSCRIPTEN_KEEPALIVE float *uvl_gpu_data(void) { return g_data.p; }
 EMSCRIPTEN_KEEPALIVE uint32_t uvl_gpu_data_len(void) { return (uint32_t)g_data.len; }
 EMSCRIPTEN_KEEPALIVE uint32_t uvl_gpu_count(void) { return g_count; }
 EMSCRIPTEN_KEEPALIVE float *uvl_gpu_background(void) { return g_bg; }
+/* Ranges of the prims / data arrays changed since the previous GPU frame. */
+EMSCRIPTEN_KEEPALIVE float *uvl_gpu_prim_ranges(void) { return g_prim_ranges.p; }
+EMSCRIPTEN_KEEPALIVE uint32_t uvl_gpu_prim_ranges_len(void) { return (uint32_t)g_prim_ranges.len; }
+EMSCRIPTEN_KEEPALIVE float *uvl_gpu_data_ranges(void) { return g_data_ranges.p; }
+EMSCRIPTEN_KEEPALIVE uint32_t uvl_gpu_data_ranges_len(void) { return (uint32_t)g_data_ranges.len; }
 /* MSDF atlas (see sync_atlas): 1 when JS must (re)create the buffer with
  * `uvl_gpu_atlas_size()` floats; then the queued cells to write. */
 EMSCRIPTEN_KEEPALIVE int uvl_gpu_atlas_reset(void) { return g_atlas_reset; }

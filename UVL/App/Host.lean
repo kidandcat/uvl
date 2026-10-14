@@ -194,6 +194,10 @@ namespace GPU.Batch
 
 end GPU.Batch
 
+/-- Float ranges of `new` that differ from `old` (`Batch.changedRanges`). -/
+@[export uvl_gpu_changed_ranges] def gpuChangedRanges (old new : FloatArray) : FloatArray :=
+  GPU.Batch.changedRanges old new
+
 /-- Floats per MSDF atlas cell. -/
 @[export uvl_gpu_atlas_cell_floats] def gpuCellFloats (_ : Unit) : UInt32 := MSDF.cellFloats.toUInt32
 

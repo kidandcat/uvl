@@ -196,6 +196,12 @@ The counter is a 2 MB `.wasm`. Any app works: export a constructor with
   ([GPU/Reference.lean](UVL/GPU/Reference.lean)) and get frames **bit-identical** to
   `Raster.render`, and the DSL's SDFs agree with `UVL.SDF`.
 
+* **Incremental uploads**: the primitive and data buffers persist across frames, and only
+  the float ranges that changed since the previous frame are written
+  (`Batch.changedRanges`, in Lean, shared by the browser and desktop hosts). Pressing a
+  counter button uploads a few hundred bytes; an inserted primitive (a hover highlight)
+  rewrites the records after it.
+
 The desktop uses the same program through wgpu-native; CI checks it headless
 (`uvl-gpu-check`, at most 3/255 off, MSDF text included) and in an X11 window on Xvfb.
 
@@ -296,7 +302,6 @@ Tests/        golden images, test PNG decoder, test driver
 
 ## Next steps
 
-1. Persistent primitive buffers on the GPU, updated only where the scene changed.
-2. Stateful widgets: text field, scrolling, sliders; animations with `tick`.
-3. Faster CPU sampling of MSDF glyphs (today outlines are about 2.5× faster on the CPU;
+1. Stateful widgets: text field, scrolling, sliders; animations with `tick`.
+2. Faster CPU sampling of MSDF glyphs (today outlines are about 2.5× faster on the CPU;
    MSDF is the better choice on the GPU).

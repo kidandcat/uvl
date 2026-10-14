@@ -76,7 +76,7 @@ function diff(a, b) {
       if (changed === 0) throw new Error('click did not change the frame');
 
       // hovering another button must only repaint (and upload) a small window
-      // (CPU backends; the GPU backend redraws the scene)
+      // (CPU backends), or upload only the primitives that changed (GPU)
       const other = await page.evaluate(() => window.uvl.targetCenter(1));
       const f2 = await page.evaluate(() => window.uvl.state.frames);
       await page.mouse.move(box.x + other[0], box.y + other[1]);
@@ -85,6 +85,11 @@ function diff(a, b) {
       const hover = await page.evaluate(() => [window.uvl.state.damaged, window.uvl.canvas.width * window.uvl.canvas.height]);
       if (backend !== 'gpu') console.log(`hover repainted ${hover[0]} of ${hover[1]} px`);
       if (backend !== 'gpu' && !(hover[0] > 0 && hover[0] * 10 < hover[1])) throw new Error('hover was not a partial redraw');
+      if (backend === 'gpu') {
+        const [up, total] = await page.evaluate(() => [window.uvl.state.uploaded, window.uvl.state.prims * 36 * 4]);
+        console.log(`hover uploaded ${up} bytes of GPU buffers (primitive records alone: ${total} bytes)`);
+        if (!(up > 0 && up < total)) throw new Error('hover did not upload incrementally');
+      }
       hovered = await page.evaluate(() => Array.from(window.uvl.snapshot()));
     }
 

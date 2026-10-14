@@ -182,10 +182,11 @@ static void configure(uint32_t w, uint32_t h) {
   surf_h = h;
 }
 
-/* A storage buffer of at least `bytes`; rebuilds the bind group when it grows. */
-static void ensure(WGPUBuffer *buf, uint64_t *cap, uint64_t bytes) {
+/* A storage buffer of at least `bytes`; rebuilds the bind group when it grows.
+ * Returns 1 when the buffer is new (its contents must be written in full). */
+static int ensure(WGPUBuffer *buf, uint64_t *cap, uint64_t bytes) {
   bytes = bytes < 16 ? 16 : (bytes + 15) / 16 * 16;
-  if (*buf && *cap >= bytes) return;
+  if (*buf && *cap >= bytes) return 0;
   if (*buf) wgpuBufferRelease(*buf);
   if (bytes < *cap * 2) bytes = *cap * 2;
   WGPUBufferDescriptor bd = {.size = bytes, .usage = WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst};
@@ -193,9 +194,17 @@ static void ensure(WGPUBuffer *buf, uint64_t *cap, uint64_t bytes) {
   *cap = bytes;
   if (bind_group) wgpuBindGroupRelease(bind_group);
   bind_group = NULL;
+  return 1;
 }
 
-static void upload(WGPUBuffer buf, b_lean_obj_arg arr) {
+/* Bytes written to the primitive and data buffers by the last draw, and
+ * whether the next draw must write them in full (a frame was dropped). */
+static uint64_t uploaded;
+static int force_full;
+
+/* Write `arr` (as f32) to `buf`: only the float ranges `ranges` (flattened
+ * start/stop pairs, see `Batch.changedRanges`) unless `full`. */
+static void upload(WGPUBuffer buf, b_lean_obj_arg arr, b_lean_obj_arg ranges, int full) {
   size_t n = lean_sarray_size(arr);
   if (!n) return;
   if (n > scratch_cap) {
@@ -204,8 +213,16 @@ static void upload(WGPUBuffer buf, b_lean_obj_arg arr) {
     scratch = malloc(sizeof(float) * scratch_cap);
   }
   const double *src = lean_float_array_cptr(arr);
-  for (size_t i = 0; i < n; i++) scratch[i] = (float)src[i];
-  wgpuQueueWriteBuffer(queue, buf, 0, scratch, sizeof(float) * n);
+  const double *r = lean_float_array_cptr(ranges);
+  size_t nr = full ? 1 : lean_sarray_size(ranges) / 2;
+  for (size_t k = 0; k < nr; k++) {
+    size_t s = full ? 0 : (size_t)r[2 * k], e = full ? n : (size_t)r[2 * k + 1];
+    if (e > n) e = n;
+    if (e <= s) continue;
+    for (size_t i = s; i < e; i++) scratch[i] = (float)src[i];
+    wgpuQueueWriteBuffer(queue, buf, sizeof(float) * s, scratch + s, sizeof(float) * (e - s));
+    uploaded += sizeof(float) * (e - s);
+  }
 }
 
 static void on_mapped(WGPUMapAsyncStatus st, WGPUStringView msg, void *u1, void *u2) {
@@ -214,9 +231,10 @@ static void on_mapped(WGPUMapAsyncStatus st, WGPUStringView msg, void *u1, void 
 }
 
 /* Draw the primitives onto `target`, then optionally copy it into `readback`. */
-static void draw(WGPUTexture target, b_lean_obj_arg prims, uint32_t count, uint32_t w, uint32_t h,
+static void draw(WGPUTexture target, b_lean_obj_arg prims, b_lean_obj_arg ranges, int full,
+                 uint32_t count, uint32_t w, uint32_t h,
                  b_lean_obj_arg bg, WGPUBuffer readback, uint32_t stride) {
-  ensure(&prims_buf, &prims_cap, sizeof(float) * lean_sarray_size(prims));
+  full |= ensure(&prims_buf, &prims_cap, sizeof(float) * lean_sarray_size(prims));
   if (!bind_group) {
     WGPUBindGroupEntry e[4] = {
       {.binding = 0, .buffer = prims_buf, .size = prims_cap},
@@ -227,7 +245,7 @@ static void draw(WGPUTexture target, b_lean_obj_arg prims, uint32_t count, uint3
     WGPUBindGroupDescriptor bgd = {.layout = bgl, .entryCount = 4, .entries = e};
     bind_group = wgpuDeviceCreateBindGroup(device, &bgd);
   }
-  upload(prims_buf, prims);
+  upload(prims_buf, prims, ranges, full);
   float screen[4] = {(float)w, (float)h, 0, 0};
   wgpuQueueWriteBuffer(queue, screen_buf, 0, screen, sizeof screen);
 
@@ -273,17 +291,24 @@ static lean_obj_res io_error(const char *what) {
   return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string(what)));
 }
 
-/* Lean: `GPU.draw prims data count w h bg readback : IO ByteArray`. Draws a
- * frame to the window surface (presenting it), or offscreen when headless.
- * With `readback` (or headless), returns the frame as tightly packed RGBA. */
-LEAN_EXPORT lean_obj_res uvl_gpu_draw(b_lean_obj_arg prims, b_lean_obj_arg data, uint32_t count,
+/* Lean: `GPU.drawRaw prims data primRanges dataRanges full count w h bg readback :
+ * IO ByteArray`. Draws a frame to the window surface (presenting it), or
+ * offscreen when headless. Only the given ranges of the arrays are written to
+ * the GPU, unless `full`. With `readback` (or headless), returns the frame as
+ * tightly packed RGBA. */
+LEAN_EXPORT lean_obj_res uvl_gpu_draw(b_lean_obj_arg prims, b_lean_obj_arg data,
+                                      b_lean_obj_arg prim_ranges, b_lean_obj_arg data_ranges,
+                                      uint8_t full, uint32_t count,
                                       uint32_t w, uint32_t h, b_lean_obj_arg bg, uint8_t want,
                                       lean_obj_arg world) {
   (void)world;
   if (!device) return io_error("uvl: GPU not initialized");
   if (w == 0 || h == 0) return lean_io_result_mk_ok(lean_alloc_sarray(1, 0, 0));
-  ensure(&data_buf, &data_cap, sizeof(float) * lean_sarray_size(data));
-  upload(data_buf, data);
+  uploaded = 0;
+  full |= force_full;
+  force_full = 0;
+  int full_data = full | ensure(&data_buf, &data_cap, sizeof(float) * lean_sarray_size(data));
+  upload(data_buf, data, data_ranges, full_data);
 
   WGPUTexture target = NULL, offscreen = NULL;
   if (surface && !want) {
@@ -293,9 +318,10 @@ LEAN_EXPORT lean_obj_res uvl_gpu_draw(b_lean_obj_arg prims, b_lean_obj_arg data,
     if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
         st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
       surf_w = surf_h = 0; /* reconfigure next time */
+      force_full = 1;      /* the primitives of this frame were not written */
       return lean_io_result_mk_ok(lean_alloc_sarray(1, 0, 0));
     }
-    draw(st.texture, prims, count, w, h, bg, NULL, 0);
+    draw(st.texture, prims, prim_ranges, full, count, w, h, bg, NULL, 0);
     wgpuSurfacePresent(surface);
     wgpuTextureRelease(st.texture);
     return lean_io_result_mk_ok(lean_alloc_sarray(1, 0, 0));
@@ -313,7 +339,7 @@ LEAN_EXPORT lean_obj_res uvl_gpu_draw(b_lean_obj_arg prims, b_lean_obj_arg data,
   WGPUBufferDescriptor bd = {.size = (uint64_t)stride * h,
                              .usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead};
   WGPUBuffer rb = wgpuDeviceCreateBuffer(device, &bd);
-  draw(target, prims, count, w, h, bg, rb, stride);
+  draw(target, prims, prim_ranges, full, count, w, h, bg, rb, stride);
   int done = 0;
   wgpuBufferMapAsync(rb, WGPUMapMode_Read, 0, bd.size,
     (WGPUBufferMapCallbackInfo){.mode = WGPUCallbackMode_AllowProcessEvents,
@@ -338,6 +364,12 @@ LEAN_EXPORT lean_obj_res uvl_gpu_draw(b_lean_obj_arg prims, b_lean_obj_arg data,
   wgpuBufferRelease(rb);
   wgpuTextureRelease(offscreen);
   return lean_io_result_mk_ok(out);
+}
+
+/* Lean: `GPU.uploadedBytes : IO UInt64`, bytes written by the last draw. */
+LEAN_EXPORT lean_obj_res uvl_gpu_uploaded_bytes(lean_obj_arg world) {
+  (void)world;
+  return lean_io_result_mk_ok(lean_box_uint64(uploaded));
 }
 
 /* Lean: `GPU.atlasReset floats : IO Unit`. Replace the MSDF atlas buffer by a

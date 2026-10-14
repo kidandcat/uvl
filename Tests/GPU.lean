@@ -69,8 +69,26 @@ def scenes : List Scene := [
   counterScene
 ]
 
+/-- Writing `changedRanges old new` of `new` over `old` gives `new`. -/
+def patchOk (old new : FloatArray) : Bool := Id.run do
+  let rs := Batch.changedRanges old new
+  let mut buf := old
+  while buf.size < new.size do buf := buf.push 0
+  for k in [0:rs.size / 2] do
+    for i in [rs[2 * k]!.toUInt64.toNat:rs[2 * k + 1]!.toUInt64.toNat] do
+      buf := buf.set! i new[i]!
+  return (List.range new.size).all fun i => buf[i]!.toBits == new[i]!.toBits
+
 def run : IO Bool := do
   let mut ok ← check "shader SDFs (circle, rounded box, segment, ellipse, erf) == UVL.SDF" sdfAgree
+  let a := Batch.build 320 240 counterScene.ops
+  let rt := (Runtime.start Examples.Counter.app 320 240).handle (.keyDown (.char '+'))
+  let b := Batch.build 320 240 (rt.tree.2.toOps 0 0 rt.pointerState)
+  let rs := Batch.changedRanges a.prims b.prims
+  ok := (← check s!"incremental upload: patching the changed ranges ({Batch.rangesSize rs} of {b.prims.size} floats) rebuilds the new frame"
+    (patchOk a.prims b.prims && patchOk a.data b.data && patchOk b.prims a.prims
+      && patchOk .empty b.prims && Batch.rangesSize rs < b.prims.size
+      && (Batch.changedRanges b.prims b.prims).size == 0)) && ok
   for s in scenes do
     let t0 ← IO.monoMsNow
     let (mx, n) := compare (referenceRender s.w s.h s.ops s.bg).data (Raster.render s.w s.h s.ops s.bg).data

@@ -124,22 +124,42 @@ class GPURenderer {
    * rebuilt) only when it has to grow. */
   ensure(which, bytes) {
     const size = Math.max(16, Math.ceil(bytes / 16) * 16);
-    if (this[which] && this[which].size >= size) return;
+    if (this[which] && this[which].size >= size) return false;
     this[which]?.destroy();
     this[which] = this.device.createBuffer({
       size: Math.max(size, (this[which]?.size ?? 0) * 2),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     this.bindGroup = null;
+    return true;
   }
 
-  /** Draw `scene` ({prims, data: Float32Array, count, bg: [r,g,b,a]}). */
+  /** Write `arr` to buffer `which`: only the `ranges` (flattened float
+   * start/stop pairs) unless the buffer was just (re)allocated. Returns the
+   * bytes written. */
+  write(which, arr, ranges, full) {
+    if (!arr.length) return 0;
+    if (full || !ranges) {
+      this.device.queue.writeBuffer(this[which], 0, arr);
+      return arr.byteLength;
+    }
+    let bytes = 0;
+    for (let k = 0; k + 1 < ranges.length; k += 2) {
+      const s = ranges[k], e = Math.min(ranges[k + 1], arr.length);
+      if (e > s) { this.device.queue.writeBuffer(this[which], s * 4, arr, s, e - s); bytes += (e - s) * 4; }
+    }
+    return bytes;
+  }
+
+  /** Draw `scene` ({prims, data: Float32Array, count, bg: [r,g,b,a]}, and
+   * optionally primRanges/dataRanges: what changed since the previous scene). */
   render(scene, w, h, readback = null) {
     const { device } = this;
+    const again = scene === this.scene; // the buffers already hold it
     // keep a copy for `readback`: the views on the wasm heap go stale
-    this.scene = scene === this.scene ? scene : { ...scene, prims: scene.prims.slice(), data: scene.data.slice() };
-    this.ensure('prims', scene.prims.byteLength);
-    this.ensure('data', scene.data.byteLength);
+    if (!again) this.scene = { ...scene, prims: scene.prims.slice(), data: scene.data.slice() };
+    const newPrims = this.ensure('prims', scene.prims.byteLength);
+    const newData = this.ensure('data', scene.data.byteLength);
     if (!this.bindGroup) {
       this.bindGroup = device.createBindGroup({
         layout: this.layout,
@@ -151,8 +171,10 @@ class GPURenderer {
         ],
       });
     }
-    if (scene.prims.length) device.queue.writeBuffer(this.prims, 0, scene.prims);
-    if (scene.data.length) device.queue.writeBuffer(this.data, 0, scene.data);
+    if (!again || newPrims || newData) {
+      this.uploaded = this.write('prims', scene.prims, scene.primRanges, newPrims || again)
+        + this.write('data', scene.data, scene.dataRanges, newData || again);
+    }
     device.queue.writeBuffer(this.screen, 0, new Float32Array([w, h, 0, 0]));
     const encoder = device.createCommandEncoder();
     const target = this.context.getCurrentTexture();
@@ -330,10 +352,13 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     data: mod.HEAPF32.subarray(mod._uvl_gpu_data() / 4, mod._uvl_gpu_data() / 4 + mod._uvl_gpu_data_len()),
     count: mod._uvl_gpu_count(),
     bg: Array.from(mod.HEAPF32.subarray(mod._uvl_gpu_background() / 4, mod._uvl_gpu_background() / 4 + 4)),
+    primRanges: mod.HEAPF32.subarray(mod._uvl_gpu_prim_ranges() / 4, mod._uvl_gpu_prim_ranges() / 4 + mod._uvl_gpu_prim_ranges_len()),
+    dataRanges: mod.HEAPF32.subarray(mod._uvl_gpu_data_ranges() / 4, mod._uvl_gpu_data_ranges() / 4 + mod._uvl_gpu_data_ranges_len()),
   });
   // damaged: pixels uploaded for the last CPU frame; prims: primitives drawn
   // for the last GPU frame; leanMs: time spent in Lean for the last frame
-  const state = { backend: 'none', frames: 0, damaged: 0, prims: 0, leanMs: 0, quit: false };
+  // uploaded: bytes of primitives and data written to the GPU for the last frame
+  const state = { backend: 'none', frames: 0, damaged: 0, prims: 0, uploaded: 0, leanMs: 0, quit: false };
 
   // A lost WebGPU device (driver reset, or software adapters in some headless
   // browsers) falls back to Canvas 2D. A canvas that has a WebGPU context can
@@ -413,6 +438,7 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
       presenter.syncAtlas(mod);
       presenter.render(scene, w, h);
       state.prims = scene.count;
+      state.uploaded = presenter.uploaded;
     } else {
       const damage = resized || !state.frames ? null : damageWindows();
       presenter.present(framePixels(), w, h, damage);

@@ -218,6 +218,40 @@ def atlasData (b : Batch) : FloatArray := Id.run do
       out := out.set! (g * MSDF.cellFloats + k) tex[k]!
   return out
 
+/-- Gaps shorter than this many floats between two changed ranges are
+re-uploaded too (one write instead of two). -/
+def mergeGap : Nat := 64
+
+/-- At most this many ranges; beyond that they collapse into one. -/
+def maxRanges : Nat := 32
+
+/-- The float ranges `[start, stop)` of `new` that differ from `old`, flattened
+as `start₀ stop₀ start₁ stop₁ …`: what to write when the GPU buffer already
+holds `old`. Floats past the end of `old` count as changed. -/
+def changedRanges (old new : FloatArray) : FloatArray := Id.run do
+  let mut rs : Array (Nat × Nat) := #[]
+  let mut i := 0
+  while i < new.size do
+    if i < old.size && old[i]!.toBits == new[i]!.toBits then
+      i := i + 1
+    else
+      let mut j := i + 1
+      while j < new.size && !(j < old.size && old[j]!.toBits == new[j]!.toBits) do j := j + 1
+      rs := match rs.back? with
+        | some (s, e) => if i - e < mergeGap then rs.pop.push (s, j) else rs.push (i, j)
+        | none => rs.push (i, j)
+      i := j
+  if rs.size > maxRanges then
+    rs := #[(rs[0]!.1, rs[rs.size - 1]!.2)]
+  return rs.foldl (fun a (s, e) => a.push s.toFloat |>.push e.toFloat) .empty
+
+/-- Number of floats covered by `changedRanges` output. -/
+def rangesSize (rs : FloatArray) : Nat := Id.run do
+  let mut n := 0
+  for k in [0:rs.size / 2] do
+    n := n + (rs[2 * k + 1]!.toUInt64.toNat - rs[2 * k]!.toUInt64.toNat)
+  return n
+
 /-- Lower a `w × h` scene. -/
 def build (w h : Nat) (ops : Array RenderOp) : Batch :=
   ops.foldl (op (w := w) (h := h) { clip := Clip.full w h }) {}
