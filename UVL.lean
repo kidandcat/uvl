@@ -2,6 +2,7 @@ import UVL.Core.FloatLit
 import UVL.Core.Color
 import UVL.Core.Geometry
 import UVL.Core.PixelFormat
+import UVL.Core.Scalar
 import UVL.Render.FrameBuffer
 import UVL.Render.SDF
 import UVL.Render.Paint

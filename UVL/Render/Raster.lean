@@ -58,6 +58,9 @@ structure Ctx (w h : Nat) where
   clip : Clip w h
   ox : Nat := 0
   oy : Nat := 0
+  /-- Evaluate boxes, rounded boxes and circles in Q16.16 fixed point
+  (microcontrollers without an FPU); see `fillDistanceQ`. -/
+  fixed : Bool := false
 
 /-- Clip the context to a device-space rectangle. -/
 @[inline] def Ctx.clipTo (ctx : Ctx w h) (r : Rect) : Clip w h := ctx.clip.inter r ctx.ox ctx.oy
@@ -144,6 +147,92 @@ fields, `lip` bounds how fast the value can change per pixel. -/
       let cy := ctx.cy y.val
       scanRow c ctx y outT inT lip blur (rowDist cy) (fun px => paint.colorAt (inv.apply ⟨px, cy⟩))
         c.x0 fb
+
+/-! ### Fixed-point path
+
+With `ctx.fixed`, axis-aligned boxes, rounded boxes and circles are evaluated in
+Q16.16 (`Core/Scalar.lean`): the same `Scalar` formulas as the `Float` path,
+proved overflow-free for every input inside a 4096-pixel screen. Shapes outside
+that range, rotated or skewed transforms, blurs and paths fall back to `Float`. -/
+
+/-- Uniform scale of a transform without rotation or skew. -/
+@[inline] def uniformScale (m : Affine) : Option Float :=
+  if m.b == 0 && m.c == 0 && m.a == m.d && m.a > 0 then some m.a else none
+
+/-- Within ±4096 px, the range `Q16.circle_exact` / `Q16.roundedBox_exact` cover. -/
+@[inline] def inPx (f : Float) : Bool := f.abs <= 4095.0
+
+/-- Device-space Q16 distance of an analytic shape, when the fixed-point path applies. -/
+def sdfQOf (m : Affine) : Shape → Option (Q16 → Q16 → Q16)
+  | .rect r => boxQ r {}
+  | .roundedRect r rad => boxQ r rad
+  | .circle c r => do
+    let s ← uniformScale m
+    let c := m.apply c
+    let r := r * s
+    if inPx c.x && inPx c.y && inPx r then
+      let cx := Q16.ofFloat c.x; let cy := Q16.ofFloat c.y; let r := Q16.ofFloat r
+      some fun px py => Scalar.circle px py cx cy r
+    else none
+  | _ => none
+where
+  boxQ (r : Rect) (rad : SDF.Corners) : Option (Q16 → Q16 → Q16) := do
+    let s ← uniformScale m
+    let c := m.apply r.center
+    let b := r.halfSize
+    let (bx, by_) := (b.x * s, b.y * s)
+    let (tl, tr, br, bl) := (rad.tl * s, rad.tr * s, rad.br * s, rad.bl * s)
+    if [c.x, c.y, bx, by_, tl, tr, br, bl].all inPx then
+      let cx := Q16.ofFloat c.x; let cy := Q16.ofFloat c.y
+      let bx := Q16.ofFloat bx; let by_ := Q16.ofFloat by_
+      let tl := Q16.ofFloat tl; let tr := Q16.ofFloat tr
+      let br := Q16.ofFloat br; let bl := Q16.ofFloat bl
+      some fun px py => Scalar.roundedBox px py cx cy bx by_ tl tr br bl
+    else none
+
+/-- Whether every pixel center of this buffer lies inside the proved range. -/
+@[inline] def Ctx.fixedOk (ctx : Ctx w h) : Bool :=
+  ctx.fixed && ctx.ox + w < 4096 && ctx.oy + h < 4096
+
+/-- Fixed-point counterpart of `fillDistance` for exact (1-Lipschitz) fields.
+
+The Q16 field differs from the exact field of the Q16 shape by less than one
+raw unit (the square root rounds down), so the run lengths keep a 2-unit margin:
+a skipped pixel would have evaluated to `≥ 1/2` and a filled one to `≤ -1/2`.
+That keeps tiles bit-identical to the full frame, as on the `Float` path. -/
+def fillDistanceQ (fb : FrameBuffer w h) (ctx : Ctx w h) (bbox : Rect) (paint : Paint)
+    (dist : Q16 → Q16 → Q16) : FrameBuffer w h :=
+  let c := ctx.clipTo bbox
+  let inv := ctx.m.inverse
+  let solid := match paint with | .solid col => some col | _ => none
+  let outT : Q16 := Scalar.half
+  let inT : Q16 := -Scalar.half
+  let margin : Q16 := ⟨2⟩
+  foldRange c.y0 c.y1 c.hy fb fun fb y =>
+    let cy := ctx.cy y.val
+    let qy := Q16.pixelCenter (y.val + ctx.oy)
+    let colorAt (px : Float) : Color := match solid with
+      | some col => col
+      | none => paint.colorAt (inv.apply ⟨px, cy⟩)
+    let rec go (x : Nat) (fb : FrameBuffer w h) : FrameBuffer w h :=
+      if hx : x < c.x1 then
+        let d := dist (Q16.pixelCenter (x + ctx.ox)) qy
+        if !Scalar.lt d outT then
+          go (x + Max.max 1 (d - outT - margin).floorNat) fb
+        else if !Scalar.lt inT d then
+          let n := Max.max 1 (inT - d - margin).floorNat
+          let stop := Min.min c.x1 (x + n)
+          let fb := foldRange x stop (Nat.le_trans (Nat.min_le_left _ _) c.hx) fb fun fb xi =>
+            fb.blend xi y (colorAt (ctx.cx xi.val)) 1.0
+          go stop fb
+        else
+          let fb := fb.blend ⟨x, Nat.lt_of_lt_of_le hx c.hx⟩ y (colorAt (ctx.cx x))
+            (Scalar.coverage d).toFloat
+          go (x + 1) fb
+      else fb
+    termination_by c.x1 - x
+    decreasing_by all_goals omega
+    go c.x0 fb
 
 /-- Fill an SDF (given in local space) through the context transform. -/
 @[inline] def fillSDF (fb : FrameBuffer w h) (ctx : Ctx w h) (bbox : Rect) (paint : Paint)
@@ -338,9 +427,19 @@ def strokeShape (ctx : Ctx w h) (fb : FrameBuffer w h) (s : Shape) (width : Floa
 
 partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → FrameBuffer w h
   | .fill (.path p rule) paint => fillPolys fb ctx (p.flatten ctx.m) rule paint
-  | .fill s paint => fillShape ctx fb s paint
+  | .fill s paint =>
+    match (if ctx.fixedOk then sdfQOf ctx.m s else none), sdfOf s with
+    | some d, some (bbox, _) => fillDistanceQ fb ctx ((ctx.m.mapRect bbox).inflate 1.0) paint d
+    | _, _ => fillShape ctx fb s paint
   | .stroke (.path p _) width paint => strokePolys fb ctx (p.flatten ctx.m) width paint
-  | .stroke s width paint => strokeShape ctx fb s width paint
+  | .stroke s width paint =>
+    let hw := width / 2.0 * (uniformScale ctx.m |>.getD 0)
+    match if ctx.fixedOk && inPx hw then sdfQOf ctx.m s else none, sdfOf s with
+    | some d, some (bbox, _) =>
+      let hw := Q16.ofFloat hw
+      fillDistanceQ fb ctx ((ctx.m.mapRect (bbox.inflate (width / 2.0))).inflate 1.0) paint
+        fun px py => Scalar.abs (d px py) - hw
+    | _, _ => strokeShape ctx fb s width paint
   | .shadow r radius blur c =>
     let rc := r.center; let hs := r.halfSize
     fillSDF fb ctx r (.solid c) (fun p => SDF.roundedBox p rc hs (.all radius))
@@ -351,18 +450,20 @@ partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → Frame
   | .group ops => ops.foldl (renderOp ctx) fb
 
 /-- Render a scene onto an existing buffer. -/
-def renderInto (fb : FrameBuffer w h) (ops : Array RenderOp) : FrameBuffer w h :=
-  ops.foldl (renderOp { clip := Clip.full w h }) fb
+def renderInto (fb : FrameBuffer w h) (ops : Array RenderOp) (fixed : Bool := false) :
+    FrameBuffer w h :=
+  ops.foldl (renderOp { clip := Clip.full w h, fixed }) fb
 
 /-- Render a scene onto a fresh `w × h` buffer cleared to `bg`. -/
-def render (w h : Nat) (ops : Array RenderOp) (bg : Color := Color.white) : FrameBuffer w h :=
-  renderInto (FrameBuffer.new w h bg) ops
+def render (w h : Nat) (ops : Array RenderOp) (bg : Color := Color.white) (fixed : Bool := false) :
+    FrameBuffer w h :=
+  renderInto (FrameBuffer.new w h bg) ops fixed
 
 /-- Render only the `tw × th` window of the scene whose top-left device pixel is
 `(ox, oy)`. Every pixel gets exactly the value it has in `render` (same device
 coordinates, same blend sequence); see `Render/Tile.lean`. -/
-def renderWindow (ox oy tw th : Nat) (ops : Array RenderOp) (bg : Color := Color.white) :
-    FrameBuffer tw th :=
-  ops.foldl (renderOp { clip := Clip.full tw th, ox, oy }) (FrameBuffer.new tw th bg)
+def renderWindow (ox oy tw th : Nat) (ops : Array RenderOp) (bg : Color := Color.white)
+    (fixed : Bool := false) : FrameBuffer tw th :=
+  ops.foldl (renderOp { clip := Clip.full tw th, ox, oy, fixed }) (FrameBuffer.new tw th bg)
 
 end UVL.Raster

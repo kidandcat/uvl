@@ -1015,6 +1015,19 @@ obj lean_big_int_to_nat(obj a) {
     return n ? lean_box(0) : nat_of_u64(m);
 }
 
+uint8_t lean_float_isnan(double a) { return a != a; }
+uint8_t lean_float_isinf(double a) { return a == a && a - a != a - a; }
+uint8_t lean_float_isfinite(double a) { return a - a == a - a; }
+
+/* Int -> IntN wraps modulo 2^N, like the reference runtime. */
+int64_t lean_int64_of_big_int(b_lean_obj_arg a) {
+    bool neg; uint64_t m; int_get(a, &neg, &m);
+    return (int64_t)(neg ? (uint64_t)0 - m : m);
+}
+int32_t lean_int32_of_big_int(b_lean_obj_arg a) { return (int32_t)lean_int64_of_big_int(a); }
+int16_t lean_int16_of_big_int(b_lean_obj_arg a) { return (int16_t)lean_int64_of_big_int(a); }
+int8_t lean_int8_of_big_int(b_lean_obj_arg a) { return (int8_t)lean_int64_of_big_int(a); }
+
 double lean_float_of_bits(uint64_t u) { double d; memcpy(&d, &u, sizeof d); return d; }
 uint64_t lean_float_to_bits(double d) { uint64_t u; memcpy(&u, &d, sizeof u); return u; }
 

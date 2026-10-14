@@ -103,10 +103,10 @@ tiles are clipped to the frame). -/
 @[inline] def extent (n tileSize t : Nat) : Nat := Min.min tileSize (n - t)
 
 /-- Render the tile whose top-left device pixel is `(tx, ty)` of a `w × h` frame. -/
-def render (scene : TileList) (w h tw th tx ty : Nat) (bg : Color := Color.white) :
-    FrameBuffer (extent w tw tx) (extent h th ty) :=
+def render (scene : TileList) (w h tw th tx ty : Nat) (bg : Color := Color.white)
+    (fixed : Bool := false) : FrameBuffer (extent w tw tx) (extent h th ty) :=
   let cw := extent w tw tx; let ch := extent h th ty
-  Raster.renderWindow tx ty cw ch (scene.select tx ty cw ch) bg
+  Raster.renderWindow tx ty cw ch (scene.select tx ty cw ch) bg fixed
 
 /-- Top-left corners of all tiles, row by row. -/
 def origins (w h tw th : Nat) : Array (Nat × Nat) := Id.run do
@@ -124,26 +124,26 @@ def blit (dst : ByteArray) (w : Nat) (tile : ByteArray) (cw ch tx ty : Nat) : By
 
 /-- Render a full frame tile by tile and assemble it (desktop validation path:
 must equal `Raster.render w h ops bg` byte for byte). -/
-def renderTiled (w h tw th : Nat) (ops : Array RenderOp) (bg : Color := Color.white) :
-    FrameBuffer w h :=
+def renderTiled (w h tw th : Nat) (ops : Array RenderOp) (bg : Color := Color.white)
+    (fixed : Bool := false) : FrameBuffer w h :=
   let scene := TileList.build ops
   let data := (origins w h tw th).foldl (init := (FrameBuffer.new w h bg).data) fun acc (tx, ty) =>
-    blit acc w (render scene w h tw th tx ty bg).data (extent w tw tx) (extent h th ty) tx ty
+    blit acc w (render scene w h tw th tx ty bg fixed).data (extent w tw tx) (extent h th ty) tx ty
   if hs : data.size = w * h * 4 then ⟨data, hs⟩ else FrameBuffer.new w h bg
 
 /-- Big-endian RGB565 bytes of one tile: what goes into the SPI DMA buffer. -/
-def renderRGB565 (scene : TileList) (w h tw th tx ty : Nat) (bg : Color := Color.white) :
-    ByteArray :=
-  (render scene w h tw th tx ty bg).toRGB565
+def renderRGB565 (scene : TileList) (w h tw th tx ty : Nat) (bg : Color := Color.white)
+    (fixed : Bool := false) : ByteArray :=
+  (render scene w h tw th tx ty bg fixed).toRGB565
 
 /-- A whole frame streamed as RGB565 tiles, re-assembled into a row-major
 RGB565 image (`2 * w * h` bytes), as the panel's GRAM would end up. -/
-def renderTiledRGB565 (w h tw th : Nat) (ops : Array RenderOp) (bg : Color := Color.white) :
-    ByteArray :=
+def renderTiledRGB565 (w h tw th : Nat) (ops : Array RenderOp) (bg : Color := Color.white)
+    (fixed : Bool := false) : ByteArray :=
   let scene := TileList.build ops
   (origins w h tw th).foldl (init := ByteArray.mk (Array.replicate (2 * w * h) 0)) fun acc (tx, ty) =>
     let cw := extent w tw tx; let ch := extent h th ty
-    let tile := renderRGB565 scene w h tw th tx ty bg
+    let tile := renderRGB565 scene w h tw th tx ty bg fixed
     (List.range ch).foldl (init := acc) fun acc row =>
       tile.copySlice (row * cw * 2) acc (((ty + row) * w + tx) * 2) (cw * 2)
 

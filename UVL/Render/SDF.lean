@@ -1,4 +1,5 @@
 import UVL.Core.Geometry
+import UVL.Core.Scalar
 
 /-!
 # Signed distance fields
@@ -14,9 +15,9 @@ namespace UVL.SDF
 @[inline] def clamp (x lo hi : Float) : Float := if x < lo then lo else if x > hi then hi else x
 
 /-- Coverage of a pixel whose center is at signed distance `d` (1px box filter). -/
-@[inline] def coverage (d : Float) : Float := clamp (0.5 - d) 0.0 1.0
+@[inline] def coverage (d : Float) : Float := Scalar.coverage d
 
-@[inline] def circle (p c : Vec2) (r : Float) : Float := (p - c).length - r
+@[inline] def circle (p c : Vec2) (r : Float) : Float := Scalar.circle p.x p.y c.x c.y r
 
 /-- Corner radii, clockwise from top-left. -/
 structure Corners where
@@ -30,12 +31,7 @@ def Corners.all (r : Float) : Corners := ⟨r, r, r, r⟩
 
 /-- Rounded box centered at `c` with half extents `b` (Inigo Quilez' formula). -/
 @[inline] def roundedBox (p c b : Vec2) (rad : Corners) : Float :=
-  let q := p - c
-  let r := if q.x > 0 then (if q.y > 0 then rad.br else rad.tr)
-           else (if q.y > 0 then rad.bl else rad.tl)
-  let r := Min.min r (Min.min b.x b.y)
-  let d : Vec2 := ⟨q.x.abs - b.x + r, q.y.abs - b.y + r⟩
-  Min.min (Max.max d.x d.y) 0.0 + (Vec2.max d ⟨0, 0⟩).length - r
+  Scalar.roundedBox p.x p.y c.x c.y b.x b.y rad.tl rad.tr rad.br rad.bl
 
 @[inline] def box (p c b : Vec2) : Float := roundedBox p c b {}
 

@@ -38,6 +38,8 @@ structure Config where
   height : Nat
   tileW : Nat := 64
   tileH : Nat := 16
+  /-- Evaluate shapes in Q16.16 fixed point (no FPU needed for the per-pixel work). -/
+  fixedPoint : Bool := true
 deriving Inhabited, Repr
 
 structure Shell (Model Msg : Type) where
@@ -93,12 +95,12 @@ def tileExtent (s : Shell Model Msg) (tx ty : UInt16) : Nat × Nat :=
 edge tiles are smaller). -/
 def tileRGB565 (s : Shell Model Msg) (tx ty : UInt16) : ByteArray :=
   Tile.renderRGB565 s.scene s.cfg.width s.cfg.height s.cfg.tileW s.cfg.tileH tx.toNat ty.toNat
-    s.rt.app.background
+    s.rt.app.background s.cfg.fixedPoint
 
 /-- Tile at `(tx, ty)` packed SSD1306-style (`tw · ⌈th / 8⌉` bytes). -/
 def tileMono (s : Shell Model Msg) (tx ty : UInt16) : ByteArray :=
   (Tile.render s.scene s.cfg.width s.cfg.height s.cfg.tileW s.cfg.tileH tx.toNat ty.toNat
-    s.rt.app.background).toMonoPages
+    s.rt.app.background s.cfg.fixedPoint).toMonoPages
 
 end Shell
 

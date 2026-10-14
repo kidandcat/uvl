@@ -95,3 +95,32 @@ The script:
 To use the bundle in another project, include `uvl_bundle.cmake` and compile
 `UVL_BUNDLE_SOURCES` with `UVL_BUNDLE_INCLUDE` ahead of the Lean toolchain's
 include directory. There is no need to link against `libleanrt` or `libInit`.
+
+## Fixed point (Q16.16)
+
+Microcontrollers like the RP2040 have no FPU, so the per-pixel work runs in
+fixed point. `UVL/Core/Scalar.lean` writes the box, rounded-box and circle
+distance fields once, against a `Scalar` class. The desktop instantiates it
+with `Float`, so its output is unchanged. The bare-metal shell uses `Q16`
+(`Config.fixedPoint := true`), which is an `Int32` with `1.0 = 65536`; its
+square root is an integer `isqrt` built from 64-bit multiplies and compares.
+
+What Lean proves:
+
+- `isqrt_toInt`: for `0 ≤ n < 2^62`, `isqrt n = Nat.sqrt n`, with no 64-bit
+  overflow at any step.
+- `Q16.circle_exact` and `Q16.roundedBox_exact`: for every coordinate, half
+  extent and radius within ±4096 px, the `Int32`/`Int64` evaluation equals the
+  same formula on unbounded integers (`Q16.ideal`). In other words, nothing
+  wraps around for any screen up to 4096×4096.
+
+The rasterizer only takes this path for axis-aligned shapes (translation plus
+uniform scale) that lie inside that range. Rotations, blurs, ellipses and paths
+fall back to `Float`.
+
+Tests check three things:
+
+- Fixed-point tiles are bit-identical to the fixed-point full frame.
+- Fixed-point frames differ from `Float` by at most 1/255 on a handful of edge
+  pixels.
+- The Q16 distances match `Float` within 2^-14 px.
