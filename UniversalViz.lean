@@ -1,3 +1,4 @@
+import UniversalViz.Core.FloatLit
 import UniversalViz.Core.Color
 import UniversalViz.Core.Geometry
 import UniversalViz.Render.FrameBuffer

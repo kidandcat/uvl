@@ -49,13 +49,22 @@ namespace FrameBuffer
 
 variable {w h : Nat}
 
+/-- `n` copies of pixel `p`, with the size proved. -/
+def fillPixels (n : Nat) (p : RGBA8) : { b : ByteArray // b.size = n * 4 } :=
+  go 0 (ByteArray.emptyWithCapacity (n * 4)) rfl (Nat.zero_le _)
+where
+  go (i : Nat) (b : ByteArray) (hb : b.size = i * 4) (hi : i ≤ n) :
+      { b : ByteArray // b.size = n * 4 } :=
+    if hlt : i < n then
+      go (i + 1) (b.push p.r |>.push p.g |>.push p.b |>.push p.a)
+        (by simp only [ByteArray.size_push, hb]; omega) hlt
+    else ⟨b, by rw [hb, Nat.le_antisymm hi (Nat.le_of_not_lt hlt)]⟩
+  termination_by n - i
+
 /-- A buffer filled with a single color. -/
 def new (w h : Nat) (bg : Color := Color.transparent) : FrameBuffer w h :=
-  let p := bg.toRGBA8
-  let arr := Array.ofFn (n := w * h * 4) fun i =>
-    match i.val % 4 with
-    | 0 => p.r | 1 => p.g | 2 => p.b | _ => p.a
-  ⟨⟨arr⟩, by simp [ByteArray.size, arr]⟩
+  let ⟨b, hb⟩ := fillPixels (w * h) bg.toRGBA8
+  ⟨b, hb⟩
 
 instance : Inhabited (FrameBuffer w h) := ⟨new w h⟩
 

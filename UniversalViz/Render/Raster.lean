@@ -79,13 +79,59 @@ def sdfOf : Shape → Option (Rect × (Vec2 → Float))
   | .line a b => some (Rect.ofPoints #[a, b], fun p => SDF.segment p a b)
   | .path .. => none
 
+/-- Fill pixels of `clip ∩ bbox` from a *device-space* signed distance given
+per row (`rowDist y` is the distance as a function of the pixel-centre `x`).
+
+Distance fields are 1-Lipschitz, so one evaluation bounds a whole run of
+pixels: far outside the shape we jump ahead `d` pixels at once, and deep
+inside we fill a run of fully covered pixels without evaluating the field.
+Only the anti-aliased boundary is evaluated pixel by pixel. For approximate
+fields, `lip` bounds how fast the value can change per pixel. -/
+def fillDistance (fb : FrameBuffer w h) (ctx : Ctx w h) (bbox : Rect) (paint : Paint)
+    (rowDist : Float → Float → Float) (blur : Float := 0) (lip : Float := 1.0) :
+    FrameBuffer w h :=
+  let c := ctx.clip.inter bbox
+  let inv := ctx.m.inverse
+  let solid := match paint with | .solid col => some col | _ => none
+  -- coverage is exactly 0 beyond `outT` and (numerically) 1 below `inT`
+  let outT := if blur > 0 then 4.0 * blur + 0.5 else 0.5
+  let inT := if blur > 0 then -4.0 * blur - 0.5 else -0.5
+  foldRange c.y0 c.y1 c.hy fb fun fb y =>
+    let cy := y.val.toFloat + 0.5
+    let dist := rowDist cy
+    let colorAt (px : Float) : Color := match solid with
+      | some col => col
+      | none => paint.colorAt (inv.apply ⟨px, cy⟩)
+    let rec go (x : Nat) (fb : FrameBuffer w h) : FrameBuffer w h :=
+      if hx : x < c.x1 then
+        let px := x.toFloat + 0.5
+        let d := dist px
+        if d >= outT then
+          -- skip every pixel that is provably outside
+          go (x + Max.max 1 (floatToNat ((d - outT) / lip).floor)) fb
+        else if d <= inT then
+          -- fill every pixel that is provably fully covered
+          let n := Max.max 1 (floatToNat ((inT - d) / lip).floor)
+          let stop := Min.min c.x1 (x + n)
+          let fb := foldRange x stop (Nat.le_trans (Nat.min_le_left _ _) c.hx) fb fun fb xi =>
+            fb.blend xi y (colorAt (xi.val.toFloat + 0.5)) 1.0
+          go stop fb
+        else
+          let fb := fb.blend ⟨x, Nat.lt_of_lt_of_le hx c.hx⟩ y (colorAt px)
+            (SDF.blurredCoverage d blur)
+          go (x + 1) fb
+      else fb
+    termination_by c.x1 - x
+    decreasing_by all_goals omega
+    go c.x0 fb
+
 /-- Fill an SDF (given in local space) through the context transform. -/
 def fillSDF (fb : FrameBuffer w h) (ctx : Ctx w h) (bbox : Rect) (paint : Paint)
-    (d : Vec2 → Float) (blur : Float := 0) : FrameBuffer w h :=
+    (d : Vec2 → Float) (blur : Float := 0) (lip : Float := 1.0) : FrameBuffer w h :=
   let inv := ctx.m.inverse
   let s := ctx.m.scaleFactor
-  let dev := (ctx.m.mapRect bbox).inflate (1.0 + 3.0 * blur)
-  fillCoverage fb ctx dev paint fun p => SDF.blurredCoverage (d (inv.apply p) * s) blur
+  let dev := (ctx.m.mapRect bbox).inflate (1.0 + 4.0 * blur)
+  fillDistance fb ctx dev paint (fun cy px => d (inv.apply ⟨px, cy⟩) * s) blur lip
 
 /-! ### Scanline path filling -/
 
@@ -178,23 +224,13 @@ def strokePolys (fb : FrameBuffer w h) (ctx : Ctx w h) (polys : Array Path.Poly)
       acc.push (poly.pts[i]!, poly.pts[(i + 1) % n]!)
   if segs.isEmpty then fb else
   let bbox := (Rect.ofPoints (polys.foldl (fun acc p => acc ++ p.pts) #[])).inflate (hw + 1.0)
-  let c := ctx.clip.inter bbox
-  let inv := ctx.m.inverse
-  let solid := match paint with | .solid col => some col | _ => none
-  foldRange c.y0 c.y1 c.hy fb fun fb y =>
-    let cy := y.val.toFloat + 0.5
+  fillDistance fb ctx bbox paint fun cy =>
     let row := segs.filter fun (a, b) =>
       Min.min a.y b.y - hw - 1.0 <= cy && Max.max a.y b.y + hw + 1.0 >= cy
-    if row.isEmpty then fb else
-    foldRange c.x0 c.x1 c.hx fb fun fb x =>
-      let p : Vec2 := ⟨x.val.toFloat + 0.5, cy⟩
-      let d := row.foldl (fun d (a, b) => Min.min d (SDF.segment p a b)) 1.0e30
-      let a := SDF.coverage (d - hw)
-      if a <= 0.0 then fb else
-      let col := match solid with
-        | some col => col
-        | none => paint.colorAt (inv.apply p)
-      fb.blend x y col a
+    fun px =>
+      if row.isEmpty then 1.0e30 else
+      let p : Vec2 := ⟨px, cy⟩
+      row.foldl (fun d (a, b) => Min.min d (SDF.segment p a b)) 1.0e30 - hw
 
 /-! ### Text -/
 
@@ -212,31 +248,40 @@ def drawText (fb : FrameBuffer w h) (ctx : Ctx w h) (pos : Vec2) (s : String)
     let g := Font.glyph chars[k]!
     let gx := o.x + (k * Font.advance).toFloat * sc
     let c := ctx.clip.inter ⟨gx, o.y, 5.0 * sc, 7.0 * sc⟩
+    -- per pixel row: vertical overlap with each glyph row (separable box filter)
+    let oys := fun (py : Float) => (Array.range 7).map fun j =>
+      overlap py (py + 1.0) (o.y + j.toFloat * sc) (o.y + (j + 1).toFloat * sc)
+    -- per pixel column: horizontal coverage of each glyph row's bits
+    let rowCov := fun (px : Float) => (Array.range 7).map fun j =>
+      let bits := g[j]!
+      (Array.range 5).foldl (init := 0.0) fun acc i =>
+        if (bits >>> (4 - i)) % 2 == 1 then
+          acc + overlap px (px + 1.0) (gx + i.toFloat * sc) (gx + (i + 1).toFloat * sc)
+        else acc
+    let cols := (Array.range (c.x1 - c.x0)).map fun i => rowCov (c.x0 + i).toFloat
     foldRange c.y0 c.y1 c.hy fb fun fb y =>
-      let py := y.val.toFloat
+      let oy := oys y.val.toFloat
       foldRange c.x0 c.x1 c.hx fb fun fb x =>
-        let px := x.val.toFloat
-        let cov := (List.range 7).foldl (init := 0.0) fun acc j =>
-          let oy := overlap py (py + 1.0) (o.y + j.toFloat * sc) (o.y + (j + 1).toFloat * sc)
-          if oy <= 0.0 then acc else
-          let bits := g[j]!
-          (List.range 5).foldl (init := acc) fun acc i =>
-            if (bits >>> (4 - i)) % 2 == 1 then
-              acc + oy * overlap px (px + 1.0) (gx + i.toFloat * sc) (gx + (i + 1).toFloat * sc)
-            else acc
+        let rc := cols[x.val - c.x0]!
+        let cov := (oy.zipWith (· * ·) rc).foldl (· + ·) 0.0
         if cov <= 0.0 then fb else fb.blend x y color (if cov > 1.0 then 1.0 else cov)
 
 /-! ### Dispatch -/
 
 def strokeSDF (fb : FrameBuffer w h) (ctx : Ctx w h) (bbox : Rect) (width : Float)
-    (paint : Paint) (d : Vec2 → Float) : FrameBuffer w h :=
-  fillSDF fb ctx (bbox.inflate (width / 2.0)) paint fun p => (d p).abs - width / 2.0
+    (paint : Paint) (d : Vec2 → Float) (lip : Float := 1.0) : FrameBuffer w h :=
+  fillSDF fb ctx (bbox.inflate (width / 2.0)) paint (fun p => (d p).abs - width / 2.0) 0 lip
+
+/-- Bound on how fast a shape's field changes per pixel (1 for exact SDFs). -/
+def lipOf : Shape → Float
+  | .ellipse _ rx ry => 2.0 * Max.max rx ry / Max.max (Min.min rx ry) 1.0e-6
+  | _ => 1.0
 
 partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → FrameBuffer w h
   | .fill (.path p rule) paint => fillPolys fb ctx (p.flatten ctx.m) rule paint
   | .fill s paint =>
     match sdfOf s with
-    | some (bbox, d) => fillSDF fb ctx bbox paint d
+    | some (bbox, d) => fillSDF fb ctx bbox paint d 0 (lipOf s)
     | none => fb
   | .stroke (.path p _) width paint => strokePolys fb ctx (p.flatten ctx.m) width paint
   | .stroke (.line a b) width paint =>
@@ -244,7 +289,7 @@ partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → Frame
       fun p => SDF.segment p a b - width / 2.0
   | .stroke s width paint =>
     match sdfOf s with
-    | some (bbox, d) => strokeSDF fb ctx bbox width paint d
+    | some (bbox, d) => strokeSDF fb ctx bbox width paint d (lipOf s)
     | none => fb
   | .shadow r radius blur c =>
     fillSDF fb ctx r (.solid c) (fun p => SDF.roundedBox p r.center r.halfSize (.all radius))

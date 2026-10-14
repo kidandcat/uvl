@@ -1,3 +1,5 @@
+import UniversalViz.Core.FloatLit
+
 /-!
 # Geometry
 

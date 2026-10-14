@@ -14,7 +14,50 @@ jobs:
           test: true
       - name: Render demo images
         run: lake exe uviz-demo
+      - name: Benchmark
+        run: lake exe uviz-bench
       - uses: actions/upload-artifact@v4
         with:
           name: demo-images
           path: out/*.png
+
+  desktop:
+    runs-on: ubuntu-latest
+    env:
+      SDL_VERSION: 3.2.24
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache SDL3
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/sdl3
+          key: sdl3-${{ env.SDL_VERSION }}-${{ runner.os }}
+      - name: Build SDL3
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -sSL -o sdl.tgz https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VERSION/SDL3-$SDL_VERSION.tar.gz
+          tar xzf sdl.tgz
+          cmake -S SDL3-$SDL_VERSION -B sdl-build -DCMAKE_BUILD_TYPE=Release -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX=/opt/sdl3
+          cmake --build sdl-build --parallel
+          sudo cmake --install sdl-build
+      - uses: leanprover/lean-action@v1
+        with:
+          build: false
+          test: false
+      - name: Build the SDL3 window app
+        run: lake build uvl-counter
+        env:
+          PKG_CONFIG_PATH: /opt/sdl3/lib/pkgconfig
+      - name: Smoke test (offscreen window, real SDL click)
+        run: |
+          UVL_MAX_FRAMES=2 UVL_CLICK_TARGET=1 UVL_SCREENSHOT=counter-window.png \
+            timeout 60 .lake/build/bin/uvl-counter
+          test -s counter-window.png
+        env:
+          SDL_VIDEO_DRIVER: offscreen
+          LD_LIBRARY_PATH: /opt/sdl3/lib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-screenshot
+          path: counter-window.png

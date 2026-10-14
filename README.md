@@ -12,7 +12,7 @@ plataforma anfitriona solo tiene que entregar un *framebuffer* y un flujo de eve
 | --- | --- | --- |
 | 1. Core e imagen | `FrameBuffer` verificado, primitivas 2D con SDF, paths Bézier, gradientes, sombras, texto, rasterizador CPU, PNG/PPM | ✅ |
 | 2. Layout y DSL | Motor *Box Constraints* con invariantes en el tipo, flex (row/col/expanded), stack, DSL `ui!`, gráficos | ✅ (primera versión) |
-| 3. Interactividad desktop | Runner en C (SDL3/Sokol), bucle de eventos | pendiente |
+| 3. Interactividad desktop | Runtime estilo Elm (`App`, `Event`), hit testing, hover/press, runner SDL3 (~170 líneas de C) | ✅ |
 | 4. GPU y navegador | `webgpu.h`, Emscripten | pendiente |
 
 ## Uso rápido
@@ -22,6 +22,8 @@ lake build              # la librería
 lake exe uviz-demo      # escribe out/primitives.png, out/hello.png, out/dashboard.png
 lake test               # tests golden + layout + códecs
 lake test -- --update   # regenera las imágenes golden
+lake exe uviz-bench     # tiempo por frame del rasterizador
+lake exe uvl-counter    # app de escritorio (requiere SDL3)
 ```
 
 Requiere Lean `v4.35.0` (fijado en `lean-toolchain`).
@@ -59,6 +61,58 @@ def dashboard : UI.Widget Unit := ui! pad 20:
         lineChart [[3, 5, 4, 8, 7, 11], [1, 2, 4, 3, 6, 5]]
 ```
 
+### Apps interactivas (arquitectura Elm)
+
+Una app es `init`, un `update : Msg → Model → Model` puro y un
+`view : Model → Widget Msg` puro. El runtime (también puro) se encarga del layout,
+del *hit testing*, del feedback de hover/press y de decidir cuándo hace falta un frame
+nuevo. Ver [Examples/Counter.lean](Examples/Counter.lean):
+
+```lean
+inductive Msg | inc | dec | reset
+
+def view (m : Model) : UI.Widget Msg := ui! pad 24:
+  card:
+    row (gap := 16) (justify := .center):
+      button "-" (onTap := some Msg.dec)
+      text (toString m.count) (size := 6)
+      button "+" (onTap := some Msg.inc)
+
+def app : App Model Msg where
+  init := {}
+  update
+  view
+  subscriptions                      -- teclado, ticks, ...
+    | .keyDown .up, _ => some .inc
+    | _, _ => none
+```
+
+![counter](Tests/golden/counter.png)
+
+* **Escritorio:** `UViz.SDL.run app` abre una ventana con SDL3. El shell en C
+  ([native/sdl_shell.c](native/sdl_shell.c)) solo traduce eventos y copia el buffer RGBA a
+  una textura; no hay lógica de UI en C. Solo se redibuja cuando algo cambia, así que una UI
+  en reposo no gasta CPU.
+* **Headless / tests:** `Runtime.simulate` alimenta eventos de un guion; los tests hacen
+  clics y comparan el frame resultante con una imagen golden.
+
+Para compilar la app de escritorio hace falta SDL3 (`brew install sdl3`, o compilarlo
+desde las releases de GitHub). Lake lo busca con `pkg-config sdl3` o en los prefijos
+habituales. Sin pantalla se puede probar con
+`SDL_VIDEO_DRIVER=offscreen UVL_MAX_FRAMES=2 UVL_CLICK_TARGET=1 UVL_SCREENSHOT=shot.png lake exe uvl-counter`.
+
+### Rendimiento
+
+CPU, un núcleo, 800×600 (`lake exe uviz-bench`): contador ~7 ms/frame, dashboard completo
+~35 ms/frame. Dos claves:
+
+* El rasterizador aprovecha que un SDF es 1-Lipschitz: con una evaluación salta tramos
+  enteros fuera de la forma o rellena tramos enteros dentro, y solo evalúa píxel a píxel el
+  borde antialiasado.
+* Los literales `Float` se elaboran a `Float.ofBits` con el patrón de bits calculado en
+  compilación ([Core/FloatLit.lean](UniversalViz/Core/FloatLit.lean)); Lean los compilaba
+  como `Float.ofScientific` con aritmética de precisión arbitraria en cada evaluación.
+
 ### Escena de bajo nivel (`RenderOp`)
 
 ```lean
@@ -77,11 +131,14 @@ def scene : Array RenderOp := #[
 
 ```
 UniversalViz/
-  Core/       Color, Vec2/Rect/Affine
+  Core/       Color, Vec2/Rect/Affine, literales Float rápidos
   Render/     FrameBuffer (verificado), SDF, Paint, Path, Font, RenderOp, Raster
   Output/     Deflate/zlib y PNG/PPM en Lean puro
   Layout/     Constraints, Placed (árbol posicionado), Widget + motor de layout
   UI/         API de widgets, DSL ui!, gráficos (barras, líneas, donut)
+  App/        Event, App y Runtime (Elm architecture, hit testing)
+UVLWindow.lean  shell SDL3 (FFI) — solo lo usan los ejecutables uvl-*
+native/       sdl_shell.c
 Examples/     escenas de ejemplo + ejecutable de demo
 Tests/        imágenes golden, decodificador PNG de test, test driver
 ```
@@ -117,8 +174,7 @@ Tests/        imágenes golden, decodificador PNG de test, test driver
 
 ## Próximos pasos
 
-1. Texto con salto de línea y parser TrueType + atlas MSDF.
-2. Modelo TEA (`view : State → Widget`, `update : Msg → State → State`) con `Event` unificado
-   y *hit testing* sobre `Placed`.
-3. Runner desktop en C (SDL3) que copie el `ByteArray` a una textura a 60 FPS.
-4. Backend `webgpu.h` y build con Emscripten.
+1. Hito 4: backend `webgpu.h` y build con Emscripten (el mismo `Runtime` en el navegador).
+2. Texto con salto de línea y parser TrueType + atlas MSDF.
+3. Widgets con estado propio: campo de texto, scroll, sliders; animaciones con `tick`.
+4. Redibujado parcial (solo las regiones sucias) para pantallas grandes.
