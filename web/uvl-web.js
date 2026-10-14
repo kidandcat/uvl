@@ -233,7 +233,7 @@ class WebGPUPresenter {
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       });
       this.bindGroup = device.createBindGroup({
-        layout: this.layout,
+        layout: this.pipeline.getBindGroupLayout(0),
         entries: [{ binding: 0, resource: this.texture.createView() }],
       });
     }
