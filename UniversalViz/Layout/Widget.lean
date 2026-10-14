@@ -37,40 +37,44 @@ inductive Justify where
   | spaceBetween
 deriving Inhabited, BEq, Repr
 
-inductive Widget where
+inductive Widget (Msg : Type) where
   | empty
   | text (s : String) (scale : Nat) (color : Color)
   /-- A box that would like to be `w × h`, filled with `paint`. -/
   | box (w h : Nat) (paint : Paint)
   /-- A custom-painted area that would like to be `w × h`. -/
   | canvas (w h : Nat) (draw : Rect → Array RenderOp)
-  | padding (l t r b : Nat) (child : Widget)
-  | center (child : Widget)
-  | sized (w h : Option Nat) (child : Widget)
-  | decorated (d : Decoration) (child : Widget)
+  | padding (l t r b : Nat) (child : Widget Msg)
+  | center (child : Widget Msg)
+  | sized (w h : Option Nat) (child : Widget Msg)
+  | decorated (d : Decoration) (child : Widget Msg)
   /-- Row (`horizontal`) or column (`vertical`). -/
-  | flex (axis : Axis) (gap : Nat) (justify : Justify) (cross : Align) (children : List Widget)
+  | flex (axis : Axis) (gap : Nat) (justify : Justify) (cross : Align) (children : List (Widget Msg))
   /-- Inside a row/column, take a `flex` share of the free space. -/
-  | expanded (flex : Nat) (child : Widget)
-  | stack (h v : Align) (children : List Widget)
+  | expanded (flex : Nat) (child : Widget Msg)
+  | stack (h v : Align) (children : List (Widget Msg))
+  /-- Tap target dispatching `msg`; `radius` shapes the hover/press feedback. -/
+  | onTap (msg : Msg) (radius : Float) (child : Widget Msg)
 deriving Inhabited
 
+variable {Msg : Type}
+
 /-- The result of laying out under `c`: size, its proof of admissibility, and the tree. -/
-structure Result (c : Constraints) where
+structure Result (Msg : Type) (c : Constraints) where
   size : Size
-  node : Placed size
+  node : Placed Msg size
   ok : c.Admits size
 
-instance (c : Constraints) : Inhabited (Result c) :=
+instance (c : Constraints) : Inhabited (Result Msg c) :=
   ⟨⟨⟨c.minW, c.minH⟩, default, Nat.le_refl _, c.hw, Nat.le_refl _, c.hh⟩⟩
 
 /-- A laid-out child that respects the maxima of `c`. -/
-structure FitItem (c : Constraints) where
-  child : Child
+structure FitItem (Msg : Type) (c : Constraints) where
+  child : Child Msg
   hw : child.size.w ≤ c.maxW
   hh : child.size.h ≤ c.maxH
 
-def Result.fitWithin {c : Constraints} {a b d e : Nat} (r : Result (c.within a b d e)) : FitItem c :=
+def Result.fitWithin {c : Constraints} {a b d e : Nat} (r : Result Msg (c.within a b d e)) : FitItem Msg c :=
   ⟨⟨r.size, r.node⟩, (Constraints.le_max_of_within r.ok).1, (Constraints.le_max_of_within r.ok).2⟩
 
 def maxOf {α : Type} (f : α → Nat) : List α → Nat
@@ -87,12 +91,12 @@ open Constraints in
 /-- Assemble a node under `c`. The size is the content size clamped into `c`
 (but never smaller than any child), and children are positioned by `pos`,
 which receives the final size. -/
-def finish (c : Constraints) (v : Visual) (contentW contentH : Nat) (kids : List (FitItem c))
-    (pos : Size → List (Nat × Nat)) : Result c :=
+def finish (c : Constraints) (v : Visual Msg) (contentW contentH : Nat) (kids : List (FitItem Msg c))
+    (pos : Size → List (Nat × Nat)) : Result Msg c :=
   let s : Size :=
     ⟨clampN c.minW c.maxW (Max.max contentW (maxOf (·.child.size.w) kids)),
      clampN c.minH c.maxH (Max.max contentH (maxOf (·.child.size.h) kids))⟩
-  let items : List (Nat × Nat × Child) := ((pos s).zip kids).map fun (p, k) => (p.1, p.2, k.child)
+  let items : List (Nat × Nat × Child Msg) := ((pos s).zip kids).map fun (p, k) => (p.1, p.2, k.child)
   have hfit : ∀ it ∈ items, it.2.2.size.w ≤ s.w ∧ it.2.2.size.h ≤ s.h := by
     intro it hit
     simp only [items, List.mem_map] at hit
@@ -107,7 +111,7 @@ def finish (c : Constraints) (v : Visual) (contentW contentH : Nat) (kids : List
   ⟨s, .node s v (Kids.ofList items hfit), clampN_ge c.hw, clampN_le, clampN_ge c.hh, clampN_le⟩
 
 /-- A node without children. -/
-def leaf (c : Constraints) (want : Size) (v : Visual) : Result c :=
+def leaf (c : Constraints) (want : Size) (v : Visual Msg) : Result Msg c :=
   ⟨c.constrain want, .leaf _ v, c.constrain_admits want⟩
 
 @[inline] def alignOffset (a : Align) (space item : Nat) : Nat :=
@@ -116,12 +120,12 @@ def leaf (c : Constraints) (want : Size) (v : Visual) : Result c :=
   | .end_ => space - item
   | _ => 0
 
-def flexOf : Widget → Option Nat
+def flexOf : Widget Msg → Option Nat
   | .expanded f _ => some (Max.max f 1)
   | _ => none
 
 /-- Lay out `w` under constraints `c`. Total: recursion is on the widget tree. -/
-def layout (w : Widget) (c : Constraints) : Result c :=
+def layout (w : Widget Msg) (c : Constraints) : Result Msg c :=
   match w with
   | .empty => leaf c ⟨0, 0⟩ .none
   | .text s scale col =>
@@ -145,6 +149,9 @@ def layout (w : Widget) (c : Constraints) : Result c :=
   | .decorated d child =>
     let k := (layout child (c.within c.minW c.maxW c.minH c.maxH)).fitWithin
     finish c (.deco d) k.child.size.w k.child.size.h [k] fun _ => [(0, 0)]
+  | .onTap msg radius child =>
+    let k := (layout child (c.within c.minW c.maxW c.minH c.maxH)).fitWithin
+    finish c (.tap msg radius) k.child.size.w k.child.size.h [k] fun _ => [(0, 0)]
   | .expanded _ child => layout child c
   | .stack ha va children =>
     let kids := children.map fun ch => (layout ch (c.within 0 c.maxW 0 c.maxH)).fitWithin
@@ -160,13 +167,13 @@ def layout (w : Widget) (c : Constraints) : Result c :=
     let gaps := gap * (n - 1)
     let totalFlex := children.foldl (fun t ch => t + (flexOf ch).getD 0) 0
     -- Lay out all children with the given cross-axis bounds.
-    let run (crossMin crossHi : Nat) : List (FitItem c) :=
-      let fit (ch : Widget) (_h : ch ∈ children) (mMin mMax : Nat) : FitItem c :=
+    let run (crossMin crossHi : Nat) : List (FitItem Msg c) :=
+      let fit (ch : Widget Msg) (_h : ch ∈ children) (mMin mMax : Nat) : FitItem Msg c :=
         if vertical then (layout ch (c.within crossMin crossHi mMin mMax)).fitWithin
         else (layout ch (c.within mMin mMax crossMin crossHi)).fitWithin
       -- Phase 1: inflexible children, in order, each limited to the space still free.
       let (used, firstPass) := children.attach.foldl
-        (init := (0, (#[] : Array (Option (FitItem c)))))
+        (init := (0, (#[] : Array (Option (FitItem Msg c)))))
         fun (used, acc) ⟨ch, hch⟩ =>
           match flexOf ch with
           | some _ => (used, acc.push none)
@@ -184,7 +191,7 @@ def layout (w : Widget) (c : Constraints) : Result c :=
     let kids0 := run 0 crossMax
     -- `stretch`: relayout every child at the common cross size (the largest
     -- natural one, or the parent's minimum if bigger), like CSS `align-items: stretch`.
-    let kids : List (FitItem c) :=
+    let kids : List (FitItem Msg c) :=
       if cross == .stretch then
         let parentMin := if vertical then c.minW else c.minH
         let target := Min.min crossMax (Max.max parentMin (maxOf (fun k => crossOf k.child.size) kids0))
@@ -210,8 +217,9 @@ def layout (w : Widget) (c : Constraints) : Result c :=
 
 /-- Lay out `w` to fill a `width × height` surface (tight constraints) and
 lower it to render ops. -/
-def Widget.toOps (w : Widget) (width height : Nat) : Array RenderOp :=
+def Widget.toOps (w : Widget Msg) (width height : Nat) (p : PointerState := {}) :
+    Array RenderOp :=
   let r := layout w (Constraints.tight ⟨width, height⟩)
-  r.node.toOps 0 0
+  r.node.toOps 0 0 p
 
 end UViz.Layout

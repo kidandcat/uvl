@@ -9,6 +9,8 @@ paint with the same `RenderOp` primitives.
 
 namespace UViz.UI
 
+variable {Msg : Type}
+
 def palette : Array Color :=
   #[Color.hex 0x1E88E5, Color.hex 0x43A047, Color.hex 0xFB8C00, Color.hex 0x8E24AA,
     Color.hex 0xE53935, Color.hex 0x00897B]
@@ -18,7 +20,7 @@ private def maxVal (xs : List Float) : Float :=
   if m <= 0 then 1 else m
 
 /-- Vertical bar chart with labels under each bar. -/
-def barChart (data : List (String × Float)) (w : Nat := 320) (h : Nat := 200) : Widget :=
+def barChart (data : List (String × Float)) (w : Nat := 320) (h : Nat := 200) : Widget Msg :=
   canvas w h fun r => Id.run do
     let n := data.length
     if n == 0 then return #[]
@@ -45,7 +47,7 @@ def barChart (data : List (String × Float)) (w : Nat := 320) (h : Nat := 200) :
     return ops
 
 /-- Line chart of one or more series sharing the same x positions. -/
-def lineChart (series : List (List Float)) (w : Nat := 320) (h : Nat := 200) : Widget :=
+def lineChart (series : List (List Float)) (w : Nat := 320) (h : Nat := 200) : Widget Msg :=
   canvas w h fun r => Id.run do
     let all := series.foldl (· ++ ·) []
     let m := maxVal all
@@ -76,7 +78,7 @@ def lineChart (series : List (List Float)) (w : Nat := 320) (h : Nat := 200) : W
     return ops
 
 /-- Donut chart. -/
-def donutChart (values : List Float) (size : Nat := 160) (thickness : Float := 26) : Widget :=
+def donutChart (values : List Float) (size : Nat := 160) (thickness : Float := 26) : Widget Msg :=
   canvas size size fun r => Id.run do
     let total := values.foldl (· + ·) 0
     let total := if total <= 0 then 1 else total

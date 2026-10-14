@@ -5,10 +5,14 @@ import UniversalViz.Render.Font
 /-!
 # Placed tree
 
-The output of layout. `Placed s` is a node of size `s`; its children are stored
-in `Kids s`, and **every child carries a proof that it lies inside its parent**
-(`x + child.w ≤ s.w` and `y + child.h ≤ s.h`). A layout bug can therefore never
-produce a child that paints outside its parent: such a tree does not type-check.
+The output of layout. `Placed Msg s` is a node of size `s`; its children are
+stored in `Kids Msg s`, and **every child carries a proof that it lies inside
+its parent** (`x + child.w ≤ s.w` and `y + child.h ≤ s.h`). A layout bug can
+therefore never produce a child that paints outside its parent: such a tree
+does not type-check.
+
+`Msg` is the application's message type: interactive nodes (`Visual.tap`) carry
+the message to dispatch when tapped.
 -/
 
 namespace UViz.Layout
@@ -22,45 +26,49 @@ structure Decoration where
 deriving Inhabited
 
 /-- What a node draws behind its children. -/
-inductive Visual where
+inductive Visual (Msg : Type) where
   | none
   | deco (d : Decoration)
   | text (s : String) (scale : Nat) (color : Color)
   /-- Custom painter, given the node's absolute rectangle. -/
   | custom (draw : Rect → Array RenderOp)
+  /-- Tap target: dispatches `msg`; hover/press feedback uses corner `radius`. -/
+  | tap (msg : Msg) (radius : Float)
 deriving Inhabited
 
 mutual
-inductive Placed : Size → Type where
-  | node (s : Size) (v : Visual) (kids : Kids s) : Placed s
+inductive Placed (Msg : Type) : Size → Type where
+  | node (s : Size) (v : Visual Msg) (kids : Kids Msg s) : Placed Msg s
 
-inductive Kids : Size → Type where
-  | nil (s : Size) : Kids s
-  | cons {s : Size} (x y : Nat) (cs : Size) (child : Placed cs)
-      (hx : x + cs.w ≤ s.w) (hy : y + cs.h ≤ s.h) (rest : Kids s) : Kids s
+inductive Kids (Msg : Type) : Size → Type where
+  | nil (s : Size) : Kids Msg s
+  | cons {s : Size} (x y : Nat) (cs : Size) (child : Placed Msg cs)
+      (hx : x + cs.w ≤ s.w) (hy : y + cs.h ≤ s.h) (rest : Kids Msg s) : Kids Msg s
 end
 
-instance (s : Size) : Inhabited (Placed s) := ⟨.node s .none (.nil s)⟩
+variable {Msg : Type}
 
-def Placed.leaf (s : Size) (v : Visual) : Placed s := .node s v (.nil s)
+instance (s : Size) : Inhabited (Placed Msg s) := ⟨.node s .none (.nil s)⟩
+
+def Placed.leaf (s : Size) (v : Visual Msg) : Placed Msg s := .node s v (.nil s)
 
 /-- A child together with its size. -/
-structure Child where
+structure Child (Msg : Type) where
   size : Size
-  node : Placed size
+  node : Placed Msg size
 
 namespace Kids
 
 /-- Place a child that is known to fit; the offset is clamped so the result is
 always in bounds (the clamp is a no-op for well-behaved layouts). -/
-def place {s : Size} (x y : Nat) (c : Child) (hw : c.size.w ≤ s.w) (hh : c.size.h ≤ s.h)
-    (rest : Kids s) : Kids s :=
+def place {s : Size} (x y : Nat) (c : Child Msg) (hw : c.size.w ≤ s.w) (hh : c.size.h ≤ s.h)
+    (rest : Kids Msg s) : Kids Msg s :=
   .cons (Min.min x (s.w - c.size.w)) (Min.min y (s.h - c.size.h)) c.size c.node
     (by omega) (by omega) rest
 
 /-- Build the children list from positioned children that all fit in `s`. -/
-def ofList {s : Size} : (items : List (Nat × Nat × Child)) →
-    (∀ it ∈ items, it.2.2.size.w ≤ s.w ∧ it.2.2.size.h ≤ s.h) → Kids s
+def ofList {s : Size} : (items : List (Nat × Nat × Child Msg)) →
+    (∀ it ∈ items, it.2.2.size.w ≤ s.w ∧ it.2.2.size.h ≤ s.h) → Kids Msg s
   | [], _ => .nil s
   | (x, y, c) :: rest, h =>
     let hc := h (x, y, c) List.mem_cons_self
@@ -81,33 +89,88 @@ def Decoration.toOps (d : Decoration) (r : Rect) : Array RenderOp := Id.run do
     ops := ops.push (.stroke (.roundedRect inset (.all (Max.max 0 (d.radius - bw / 2)))) bw col)
   return ops
 
-def Visual.toOps (v : Visual) (r : Rect) : Array RenderOp :=
+/-- Pointer state used for hover/press feedback while painting. -/
+structure PointerState where
+  pos : Option (Nat × Nat) := none
+  pressed : Bool := false
+deriving Inhabited
+
+def PointerState.inside (p : PointerState) (r : Rect) : Bool :=
+  match p.pos with
+  | some (x, y) => r.contains ⟨x.toFloat + 0.5, y.toFloat + 0.5⟩
+  | none => false
+
+def Visual.toOps (v : Visual Msg) (r : Rect) : Array RenderOp :=
   match v with
-  | .none => #[]
+  | .none | .tap .. => #[]
   | .deco d => d.toOps r
   | .text s scale col => #[.clip r #[.text ⟨r.x, r.y⟩ s scale.toFloat col]]
   | .custom draw => #[.clip r (draw r)]
 
+/-- Feedback drawn *over* a tap target's children when hovered or pressed. -/
+def Visual.overlayOps (v : Visual Msg) (r : Rect) (p : PointerState) : Array RenderOp :=
+  match v with
+  | .tap _ radius =>
+    if p.inside r then
+      let c := if p.pressed then Color.black.withAlpha 0.18 else Color.white.withAlpha 0.18
+      #[.fill (.roundedRect r (.all radius)) c]
+    else #[]
+  | _ => #[]
+
 mutual
 /-- Lower a placed tree at absolute offset `(ox, oy)` to render ops. -/
-def Placed.toOps {s : Size} (ox oy : Nat) : Placed s → Array RenderOp
+def Placed.toOps {s : Size} (ox oy : Nat) (p : PointerState) : Placed Msg s → Array RenderOp
   | .node s v kids =>
-    v.toOps ⟨ox.toFloat, oy.toFloat, s.w.toFloat, s.h.toFloat⟩ ++ Kids.toOps ox oy kids
+    let r : Rect := ⟨ox.toFloat, oy.toFloat, s.w.toFloat, s.h.toFloat⟩
+    v.toOps r ++ Kids.toOps ox oy p kids ++ v.overlayOps r p
 
-def Kids.toOps {s : Size} (ox oy : Nat) : Kids s → Array RenderOp
+def Kids.toOps {s : Size} (ox oy : Nat) (p : PointerState) : Kids Msg s → Array RenderOp
   | .nil _ => #[]
-  | .cons x y _ child _ _ rest => child.toOps (ox + x) (oy + y) ++ Kids.toOps ox oy rest
+  | .cons x y _ child _ _ rest => child.toOps (ox + x) (oy + y) p ++ Kids.toOps ox oy p rest
 end
 
-/-! ### Inspection -/
+/-! ### Inspection and hit testing -/
 
 mutual
 /-- Absolute rectangles `(x, y, w, h)` of every node, in paint order. -/
-def Placed.rects {s : Size} (ox oy : Nat) : Placed s → List (Nat × Nat × Nat × Nat)
+def Placed.rects {s : Size} (ox oy : Nat) : Placed Msg s → List (Nat × Nat × Nat × Nat)
   | .node s _ kids => (ox, oy, s.w, s.h) :: Kids.rects ox oy kids
-def Kids.rects {s : Size} (ox oy : Nat) : Kids s → List (Nat × Nat × Nat × Nat)
+def Kids.rects {s : Size} (ox oy : Nat) : Kids Msg s → List (Nat × Nat × Nat × Nat)
   | .nil _ => []
   | .cons x y _ child _ _ rest => child.rects (ox + x) (oy + y) ++ Kids.rects ox oy rest
 end
+
+/-- A tap target: absolute rectangle and the message it dispatches. -/
+structure Target (Msg : Type) where
+  x : Nat
+  y : Nat
+  w : Nat
+  h : Nat
+  msg : Msg
+
+def Target.contains (t : Target Msg) (px py : Nat) : Bool :=
+  t.x ≤ px && px < t.x + t.w && t.y ≤ py && py < t.y + t.h
+
+mutual
+/-- All tap targets, in paint order (later = on top). -/
+def Placed.targets {s : Size} (ox oy : Nat) : Placed Msg s → List (Target Msg)
+  | .node s v kids =>
+    let here := match v with
+      | .tap msg _ => [⟨ox, oy, s.w, s.h, msg⟩]
+      | _ => []
+    here ++ Kids.targets ox oy kids
+def Kids.targets {s : Size} (ox oy : Nat) : Kids Msg s → List (Target Msg)
+  | .nil _ => []
+  | .cons x y _ child _ _ rest => child.targets (ox + x) (oy + y) ++ Kids.targets ox oy rest
+end
+
+/-- Index of the topmost target under `(px, py)`. -/
+def hitIndex (ts : Array (Target Msg)) (px py : Nat) : Option Nat := Id.run do
+  let mut found := none
+  let mut i := 0
+  for t in ts do
+    if t.contains px py then found := some i
+    i := i + 1
+  return found
 
 end UViz.Layout

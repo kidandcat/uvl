@@ -78,7 +78,7 @@ def layoutTests : IO Bool := do
     [(0, 0, 320, 160), (74, 49, 172, 62), (74, 49, 172, 62), (90, 65, 140, 30), (90, 65, 140, 30),
      (90, 73, 46, 14), (144, 65, 86, 30), (144, 65, 86, 30), (158, 73, 58, 14)])
   -- Re-check the (already proved) Admits invariant at runtime over a sweep.
-  let widgets := [Examples.hello, Examples.dashboard, UI.text "overflowing text that is long",
+  let widgets : List (UI.Widget Unit) := [Examples.hello, Examples.dashboard, UI.text "overflowing text that is long",
     UI.row [UI.box 500 20, UI.box 500 20], UI.col [UI.spacer, UI.box 10 10, UI.spacer 2]]
   let mut allOk := true
   for w in widgets do
@@ -91,7 +91,7 @@ def layoutTests : IO Bool := do
           x + cw ≤ r.size.w && y + ch ≤ r.size.h
         if !(decide (c.Admits r.size)) || !inside then allOk := false
   let t2 ← check "layout sweep: sizes admitted, all nodes inside root" allOk
-  let flex := layout (UI.row [UI.spacer, UI.box 40 10, UI.spacer 3] (gap := 0)) (Constraints.tight ⟨200, 10⟩)
+  let flex := layout (UI.row (Msg := Unit) [UI.spacer, UI.box 40 10, UI.spacer 3] (gap := 0)) (Constraints.tight ⟨200, 10⟩)
   let t3 ← check "flex: spacers share free space 1:3"
     ((flex.node.rects 0 0).map (·.1) == [0, 0, 40, 80])
   return t1 && t2 && t3

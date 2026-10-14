@@ -32,12 +32,12 @@ def primitives : Array RenderOp := #[
 
 open UI in
 /-- The example from the roadmap, written with the function API. -/
-def hello : UI.Widget :=
+def hello : UI.Widget Unit :=
   center <| card <| col [ row [ text "Hola", button "Click" ] ]
 
 open UI in
 /-- A small dashboard written with the `ui!` DSL. -/
-def dashboard : UI.Widget := ui! pad 20:
+def dashboard : UI.Widget Unit := ui! pad 20:
   col (gap := 16) (align := .stretch):
     row (gap := 12):
       text "Universal Viz" (size := 3) (color := Color.hex 0x0D47A1)
