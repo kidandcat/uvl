@@ -36,6 +36,11 @@ jobs:
       - name: Build SDL3
         if: steps.sdl-cache.outputs.cache-hit != 'true'
         run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev libgl1-mesa-dev \
+            libdrm-dev libgbm-dev libdbus-1-dev libudev-dev libasound2-dev libpulse-dev
           curl -sSL -o sdl.tgz https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VERSION/SDL3-$SDL_VERSION.tar.gz
           tar xzf sdl.tgz
           cmake -S SDL3-$SDL_VERSION -B sdl-build -DCMAKE_BUILD_TYPE=Release -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX=/opt/sdl3
