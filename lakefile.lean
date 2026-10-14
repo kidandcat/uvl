@@ -9,7 +9,7 @@ package «universal-viz» where
 lean_lib UniversalViz
 
 lean_lib Tests where
-  globs := #[.one `Tests.PngDecode]
+  globs := #[.one `Tests.PngDecode, .one `Tests.Tile]
 
 lean_lib Examples where
   globs := #[.one `Examples.Scenes, .one `Examples.Counter]

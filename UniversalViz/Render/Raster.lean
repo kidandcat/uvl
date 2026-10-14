@@ -36,33 +36,46 @@ def Clip.full (w h : Nat) : Clip w h := ⟨0, w, 0, h, Nat.le_refl _, Nat.le_ref
 
 @[inline] def floatToNat (f : Float) : Nat := if f <= 0.0 then 0 else f.toUInt64.toNat
 
-/-- Intersect a clip with a float rectangle (rounded outwards). -/
-def Clip.inter (c : Clip w h) (r : Rect) : Clip w h :=
-  { x0 := Max.max c.x0 (floatToNat r.x.floor)
-    x1 := Min.min c.x1 (floatToNat (r.x + r.w).ceil)
-    y0 := Max.max c.y0 (floatToNat r.y.floor)
-    y1 := Min.min c.y1 (floatToNat (r.y + r.h).ceil)
+/-- Intersect a clip with a float rectangle given in device space (rounded
+outwards). The buffer's pixel `(0, 0)` sits at device pixel `(ox, oy)`; the
+rounding happens in device space and the shift is integer, so a tile sees
+exactly the pixels the full frame would. -/
+def Clip.inter (c : Clip w h) (r : Rect) (ox oy : Nat := 0) : Clip w h :=
+  { x0 := Max.max c.x0 (floatToNat r.x.floor - ox)
+    x1 := Min.min c.x1 (floatToNat (r.x + r.w).ceil - ox)
+    y0 := Max.max c.y0 (floatToNat r.y.floor - oy)
+    y1 := Min.min c.y1 (floatToNat (r.y + r.h).ceil - oy)
     hx := Nat.le_trans (Nat.min_le_left _ _) c.hx
     hy := Nat.le_trans (Nat.min_le_left _ _) c.hy }
 
 def Clip.toRect (c : Clip w h) : Rect :=
   ⟨c.x0.toFloat, c.y0.toFloat, c.x1.toFloat - c.x0.toFloat, c.y1.toFloat - c.y0.toFloat⟩
 
-/-- Rendering state: current transform (local → device) and clip. -/
+/-- Rendering state: current transform (local → device), clip, and the device
+position of the buffer's top-left pixel (non-zero when rendering a tile). -/
 structure Ctx (w h : Nat) where
   m : Affine := {}
   clip : Clip w h
+  ox : Nat := 0
+  oy : Nat := 0
+
+/-- Clip the context to a device-space rectangle. -/
+@[inline] def Ctx.clipTo (ctx : Ctx w h) (r : Rect) : Clip w h := ctx.clip.inter r ctx.ox ctx.oy
+
+/-- Device-space coordinate of the center of buffer column `x` / row `y`. -/
+@[inline] def Ctx.cx (ctx : Ctx w h) (x : Nat) : Float := (x + ctx.ox).toFloat + 0.5
+@[inline] def Ctx.cy (ctx : Ctx w h) (y : Nat) : Float := (y + ctx.oy).toFloat + 0.5
 
 /-- Blend `paint` over every pixel of `bbox ∩ clip` with coverage `cov p`, where
 `p` is the pixel center in device space. -/
 @[inline] def fillCoverage (fb : FrameBuffer w h) (ctx : Ctx w h) (bbox : Rect)
     (paint : Paint) (cov : Vec2 → Float) : FrameBuffer w h :=
-  let c := ctx.clip.inter bbox
+  let c := ctx.clipTo bbox
   let inv := ctx.m.inverse
   let solid := match paint with | .solid col => some col | _ => none
   foldRange c.y0 c.y1 c.hy fb fun fb y =>
     foldRange c.x0 c.x1 c.hx fb fun fb x =>
-      let p : Vec2 := ⟨x.val.toFloat + 0.5, y.val.toFloat + 0.5⟩
+      let p : Vec2 := ⟨ctx.cx x.val, ctx.cy y.val⟩
       let a := cov p
       if a <= 0.0 then fb else
       let col := match solid with
@@ -90,21 +103,21 @@ fields, `lip` bounds how fast the value can change per pixel. -/
 def fillDistance (fb : FrameBuffer w h) (ctx : Ctx w h) (bbox : Rect) (paint : Paint)
     (rowDist : Float → Float → Float) (blur : Float := 0) (lip : Float := 1.0) :
     FrameBuffer w h :=
-  let c := ctx.clip.inter bbox
+  let c := ctx.clipTo bbox
   let inv := ctx.m.inverse
   let solid := match paint with | .solid col => some col | _ => none
   -- coverage is exactly 0 beyond `outT` and (numerically) 1 below `inT`
   let outT := if blur > 0 then 4.0 * blur + 0.5 else 0.5
   let inT := if blur > 0 then -4.0 * blur - 0.5 else -0.5
   foldRange c.y0 c.y1 c.hy fb fun fb y =>
-    let cy := y.val.toFloat + 0.5
+    let cy := ctx.cy y.val
     let dist := rowDist cy
     let colorAt (px : Float) : Color := match solid with
       | some col => col
       | none => paint.colorAt (inv.apply ⟨px, cy⟩)
     let rec go (x : Nat) (fb : FrameBuffer w h) : FrameBuffer w h :=
       if hx : x < c.x1 then
-        let px := x.toFloat + 0.5
+        let px := ctx.cx x
         let d := dist px
         if d >= outT then
           -- skip every pixel that is provably outside
@@ -114,7 +127,7 @@ def fillDistance (fb : FrameBuffer w h) (ctx : Ctx w h) (bbox : Rect) (paint : P
           let n := Max.max 1 (floatToNat ((inT - d) / lip).floor)
           let stop := Min.min c.x1 (x + n)
           let fb := foldRange x stop (Nat.le_trans (Nat.min_le_left _ _) c.hx) fb fun fb xi =>
-            fb.blend xi y (colorAt (xi.val.toFloat + 0.5)) 1.0
+            fb.blend xi y (colorAt (ctx.cx xi.val)) 1.0
           go stop fb
         else
           let fb := fb.blend ⟨x, Nat.lt_of_lt_of_le hx c.hx⟩ y (colorAt px)
@@ -180,11 +193,11 @@ def fillPolys (fb : FrameBuffer w h) (ctx : Ctx w h) (polys : Array Path.Poly)
   let edges := edgesOf polys
   if edges.isEmpty then fb else
   let bbox := Rect.ofPoints (polys.foldl (fun acc p => acc ++ p.pts) #[])
-  let c := ctx.clip.inter (bbox.inflate 1.0)
+  let c := ctx.clipTo (bbox.inflate 1.0)
   let inv := ctx.m.inverse
   let width := c.x1 - c.x0
   foldRange c.y0 c.y1 c.hy fb fun fb y => Id.run do
-    let rowTop := y.val.toFloat
+    let rowTop := (y.val + ctx.oy).toFloat
     let rowEdges := edges.filter fun e => e.y1 > rowTop && e.y0 < rowTop + 1.0
     if rowEdges.isEmpty then return fb
     let mut acc : Array Float := Array.replicate width 0.0
@@ -203,14 +216,14 @@ def fillPolys (fb : FrameBuffer w h) (ctx : Ctx w h) (polys : Array Path.Poly)
         wind := wind + d
         let inside' := if rule == .nonZero then wind != 0 else wind % 2 != 0
         if !inside && inside' then start := x
-        else if inside && !inside' then acc := addSpan acc c.x0 start x wt
+        else if inside && !inside' then acc := addSpan acc (c.x0 + ctx.ox) start x wt
     let solid := match paint with | .solid col => some col | _ => none
     return foldRange c.x0 c.x1 c.hx fb fun fb x =>
       let a := acc[x.val - c.x0]!
       if a <= 0.0 then fb else
       let col := match solid with
         | some col => col
-        | none => paint.colorAt (inv.apply ⟨x.val.toFloat + 0.5, rowTop + 0.5⟩)
+        | none => paint.colorAt (inv.apply ⟨ctx.cx x.val, rowTop + 0.5⟩)
       fb.blend x y col (if a > 1.0 then 1.0 else a)
 
 /-- Stroke polylines (device space) with round joins and caps. -/
@@ -247,7 +260,7 @@ def drawText (fb : FrameBuffer w h) (ctx : Ctx w h) (pos : Vec2) (s : String)
   (Array.range chars.size).foldl (init := fb) fun fb k =>
     let g := Font.glyph chars[k]!
     let gx := o.x + (k * Font.advance).toFloat * sc
-    let c := ctx.clip.inter ⟨gx, o.y, 5.0 * sc, 7.0 * sc⟩
+    let c := ctx.clipTo ⟨gx, o.y, 5.0 * sc, 7.0 * sc⟩
     -- per pixel row: vertical overlap with each glyph row (separable box filter)
     let oys := fun (py : Float) => (Array.range 7).map fun j =>
       overlap py (py + 1.0) (o.y + j.toFloat * sc) (o.y + (j + 1).toFloat * sc)
@@ -258,9 +271,9 @@ def drawText (fb : FrameBuffer w h) (ctx : Ctx w h) (pos : Vec2) (s : String)
         if (bits >>> (4 - i)) % 2 == 1 then
           acc + overlap px (px + 1.0) (gx + i.toFloat * sc) (gx + (i + 1).toFloat * sc)
         else acc
-    let cols := (Array.range (c.x1 - c.x0)).map fun i => rowCov (c.x0 + i).toFloat
+    let cols := (Array.range (c.x1 - c.x0)).map fun i => rowCov (c.x0 + i + ctx.ox).toFloat
     foldRange c.y0 c.y1 c.hy fb fun fb y =>
-      let oy := oys y.val.toFloat
+      let oy := oys (y.val + ctx.oy).toFloat
       foldRange c.x0 c.x1 c.hx fb fun fb x =>
         let rc := cols[x.val - c.x0]!
         let cov := (oy.zipWith (· * ·) rc).foldl (· + ·) 0.0
@@ -296,7 +309,7 @@ partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → Frame
       (blur * ctx.m.scaleFactor)
   | .text pos s scale c => drawText fb ctx pos s scale c
   | .transform m ops => ops.foldl (renderOp { ctx with m := ctx.m.compose m }) fb
-  | .clip r ops => ops.foldl (renderOp { ctx with clip := ctx.clip.inter (ctx.m.mapRect r) }) fb
+  | .clip r ops => ops.foldl (renderOp { ctx with clip := ctx.clipTo (ctx.m.mapRect r) }) fb
   | .group ops => ops.foldl (renderOp ctx) fb
 
 /-- Render a scene onto an existing buffer. -/
@@ -306,5 +319,12 @@ def renderInto (fb : FrameBuffer w h) (ops : Array RenderOp) : FrameBuffer w h :
 /-- Render a scene onto a fresh `w × h` buffer cleared to `bg`. -/
 def render (w h : Nat) (ops : Array RenderOp) (bg : Color := Color.white) : FrameBuffer w h :=
   renderInto (FrameBuffer.new w h bg) ops
+
+/-- Render only the `tw × th` window of the scene whose top-left device pixel is
+`(ox, oy)`. Every pixel gets exactly the value it has in `render` (same device
+coordinates, same blend sequence); see `Render/Tile.lean`. -/
+def renderWindow (ox oy tw th : Nat) (ops : Array RenderOp) (bg : Color := Color.white) :
+    FrameBuffer tw th :=
+  ops.foldl (renderOp { clip := Clip.full tw th, ox, oy }) (FrameBuffer.new tw th bg)
 
 end UViz.Raster

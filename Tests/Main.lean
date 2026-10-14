@@ -1,6 +1,7 @@
 import Examples.Scenes
 import Examples.Counter
 import Tests.PngDecode
+import Tests.Tile
 
 /-!
 Test driver (`lake test`).
@@ -142,5 +143,7 @@ def main (args : List String) : IO UInt32 := do
   ok := (← appTests) && ok
   IO.println "codecs:"
   ok := (← codecTests) && ok
+  IO.println "tiles / bare-metal:"
+  ok := (← Tests.Tile.run) && ok
   IO.println (if ok then "ALL TESTS PASSED" else "SOME TESTS FAILED")
   return if ok then 0 else 1
