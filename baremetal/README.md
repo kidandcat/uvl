@@ -1,100 +1,97 @@
-# UVL en microcontroladores
+# UVL on microcontrollers
 
-La misma app Lean que corre en desktop (`Examples/Counter.lean`) compilada a C y
-ejecutada sin `libleanrt`, sin sistema operativo y sin heap del sistema. La
-probamos de forma automática en x86-64, i386 y ARM Cortex-M3 (QEMU). En los tres
-casos genera frames idénticos byte a byte a los del binario Lean nativo.
+The same Lean app that runs on the desktop (`Examples/Counter.lean`), compiled
+to C and run without `libleanrt`, without an operating system and without a
+system heap. It is tested automatically on x86-64, i386 and ARM Cortex-M3
+(QEMU); all three produce frames byte-identical to the native Lean binary.
 
 ```
 baremetal/
-  include/uvl.h          ABI C entre el firmware y la app Lean
-  include/lean/config.h  sustituye al config.h del toolchain (sin mimalloc, 32 bits)
-  rt/uvl_rt.c            runtime mínimo: pool estático, RC, closures, arrays, strings, Nat/Int pequeños
-  rt/uvl_shell.c         wrappers que prestan el estado (render de tile a buffer DMA)
-  tools/uvl_bundle.py    junta el C generado + Init/Std alcanzable en un bundle compilable
-  tools/gen_c.sh         genera C de módulos del toolchain (Init/Std/Lean solo vienen como .a)
-  tools/test.sh          test extremo a extremo (host 64/32 bits + QEMU)
-  host/main.c            harness: aplica eventos y vuelca frames por tiles
-  qemu/                  startup + linker script para mps2-an385 (Cortex-M3)
+  include/uvl.h          C ABI between the firmware and the Lean app
+  include/lean/config.h  replaces the toolchain's config.h (no mimalloc, 32-bit)
+  rt/uvl_rt.c            minimal runtime: static pool, RC, closures, arrays, strings, small Nat/Int
+  rt/uvl_shell.c         wrappers that borrow the state (render a tile into a DMA buffer)
+  tools/uvl_bundle.py    gathers the generated C + reachable Init/Std into a compilable bundle
+  tools/gen_c.sh         generates C for toolchain modules (Init/Std/Lean ship only as .a)
+  tools/test.sh          end-to-end test (64/32-bit host + QEMU)
+  host/main.c            harness: applies events and streams frames tile by tile
+  qemu/                  startup + linker script for mps2-an385 (Cortex-M3)
 ```
 
-## Cómo funciona
+## How it works
 
-1. **Lado Lean.** `UniversalViz/BareMetal/Shell.lean` envuelve una `App` con el
-   modelo, la escena actual partida en tiles (`TileList`) y la configuración de
-   la pantalla. `Examples/BareMetalCounter.lean` exporta la API C con
+1. **Lean side.** `UniversalViz/BareMetal/Shell.lean` wraps an `App` together
+   with its model, the current scene split into tiles (`TileList`) and the
+   screen configuration. `Examples/BareMetalCounter.lean` exports the C API with
    `@[export]`: `uvl_init`, `uvl_event`, `uvl_needs_redraw`, `uvl_begin_frame`,
-   `uvl_tile_rgb565` y `uvl_tile_mono`.
-2. **Bundle.** `uvl_bundle.py` toma el C que genera `lake` y le añade el C de
-   los módulos de Init/Std que realmente se usan, enlazando y reiterando con
-   `--gc-sections` hasta llegar a un punto fijo. Después reescribe los
-   inicializadores de módulo para que solo inicialicen las constantes
-   alcanzables (`uvl_init.c`). El resultado es `src/*.c`, `rt/*.c` e `include/`,
-   junto con `uvl_bundle.cmake` para Pico SDK o ESP-IDF.
-3. **Firmware.** El bucle principal es el de `include/uvl.h`: convierte los
-   eventos de botones o del táctil en llamadas a `uvl_event`. Si hay que
-   redibujar, renderiza tile a tile (64×16 por defecto) en uno de dos buffers
-   y envía el otro por DMA.
+   `uvl_tile_rgb565` and `uvl_tile_mono`.
+2. **Bundle.** `uvl_bundle.py` takes the C that `lake` generates and adds the
+   C of the Init/Std modules that are actually used, linking and iterating with
+   `--gc-sections` until it reaches a fixpoint. It then rewrites the module
+   initializers so they only initialize reachable constants (`uvl_init.c`). The
+   output is `src/*.c`, `rt/*.c` and `include/`, plus `uvl_bundle.cmake` for
+   Pico SDK or ESP-IDF.
+3. **Firmware.** The main loop is the one in `include/uvl.h`: it turns button
+   or touch events into `uvl_event` calls. When a redraw is needed it renders
+   tile by tile (64×16 by default) into one of two buffers while the other one
+   is sent over DMA.
 
-### Memoria: pool estático, no arena por frame
+### Memory: a static pool, not a per-frame arena
 
-El plan original proponía una arena de 16 KB que se resetea en cada frame. No
-lo hicimos así porque, con el conteo de referencias de Lean, los temporales de
-un tile se liberan en cuanto dejan de usarse. Por eso el pico de memoria no
-crece con el número de tiles. Un reset ciego destruiría el estado de la UI
-(modelo y escena) que sobrevive entre frames.
+The original plan proposed a 16 KB arena reset every frame. We did not do
+that because, with Lean's reference counting, a tile's temporaries are freed
+as soon as they are no longer used, so peak memory does not grow with the
+number of tiles. A blind reset would also destroy the UI state (model and
+scene) that lives across frames.
 
-`uvl_rt.c` usa un pool estático (`UVL_HEAP_SIZE`, 96 KB por defecto) con
-clases de tamaño de 8 bytes hasta 512 B (O(1), listas libres), best-fit para
-bloques grandes y desfragmentación al quedarse sin memoria. No llama nunca a
-`malloc`. `uvl_heap_stats()` informa del uso.
+`uvl_rt.c` uses a static pool (`UVL_HEAP_SIZE`, 96 KB by default) with 8-byte
+size classes up to 512 B (O(1) free lists), best-fit for larger blocks, and
+defragmentation when it runs out of memory. It never calls `malloc`.
+`uvl_heap_stats()` reports usage.
 
-Medido con el contador a 320×240 en 32 bits, tiles de 64×16:
+Measured with the counter at 320×240 on 32 bits, 64×16 tiles:
 
 | | |
 | --- | --- |
-| Vivo tras `uvl_rt_init` + `uvl_init` | ~38 KB (constantes cerradas, incl. ~23 KB de la tabla de glifos) |
-| Pico de memoria viva renderizando | ~62 KB |
-| Marca máxima del pool (con fragmentación) | ~71 KB de 96 KB |
-| Código ARM (Thumb-2, `-O2`) | ~347 KB de `.text` incluyendo newlib + semihosting |
+| Live after `uvl_rt_init` + `uvl_init` | ~38 KB (closed constants, incl. ~23 KB glyph table) |
+| Peak live memory while rendering | ~62 KB |
+| Pool high-water mark (including fragmentation) | ~71 KB of 96 KB |
+| ARM code (Thumb-2, `-O2`) | ~347 KB of `.text` including newlib + semihosting |
 
-Cabe en un RP2040 (264 KB de SRAM, 2 MB de flash) y en un ESP32. La mayor parte
-de lo que ocupa tras el init es `Font.glyphTable`, que se construye como
-`Array` en el arranque. Pasarla a datos estáticos en flash ahorraría ~23 KB de
-RAM y es la siguiente optimización obvia.
+That fits an RP2040 (264 KB SRAM, 2 MB flash) and an ESP32. Most of the
+post-init footprint is `Font.glyphTable`, built as an `Array` at startup;
+moving it to static data in flash would save ~23 KB of RAM and is the next
+obvious optimization.
 
-### Detalles de 32 bits
+### 32-bit details
 
-- `include/lean/config.h` define `LEAN_EMSCRIPTEN` en targets de 32 bits.
-  `lean.h` solo usa esa macro para partir los literales escalares de 8 bytes
-  en dos palabras.
-- El compilador de Lean asume que los literales `Nat` menores que 2^63 son
-  escalares y nunca les hace `dec`. En 32 bits algunos (por ejemplo
-  `9007199254740992` en el modelo de `Float`) son objetos en el heap. Para no
-  perder memoria, el bundler los convierte en literales internados y
-  persistentes (`uvl_nat_literal`).
-- Los `Nat`/`Int` grandes se implementan con magnitud de 64 bits. Si un
-  cálculo se sale de ese rango, se produce un pánico fatal. En el código de
-  UVL no ocurre.
-- No hay `Task`s, IO de ficheros ni hilos; la app no los necesita.
+- `include/lean/config.h` defines `LEAN_EMSCRIPTEN` on 32-bit targets.
+  `lean.h` only uses that macro to split 8-byte scalar literals into two words.
+- The Lean compiler assumes `Nat` literals below 2^63 are scalars and never
+  `dec`s them. On 32 bits some of them (e.g. `9007199254740992` in the `Float`
+  model) are heap objects. To avoid leaking them, the bundler turns them into
+  interned persistent literals (`uvl_nat_literal`).
+- Big `Nat`/`Int` values are implemented with a 64-bit magnitude. A
+  computation that leaves that range is a fatal panic; UVL's code never does.
+- No `Task`s, file IO or threads; the app does not need them.
 
-## Probarlo
+## Running the test
 
 ```sh
 baremetal/tools/test.sh
 ```
 
-El script:
+The script:
 
-1. Compila `Examples` y `uvl-baremetal-ref`, la referencia nativa en Lean.
-2. Genera, solo la primera vez, el C de Init en `.lake/baremetal/init-c`
-   (unos 3 minutos).
-3. Crea el bundle en `.lake/baremetal/bundle`.
-4. Compara `frame0`/`frame1.rgb565` contra la referencia en tres builds:
-   - host de 64 bits;
-   - host de 32 bits (`gcc -m32`) con un pool de 96 KB;
-   - Cortex-M3 bajo QEMU, si están `arm-none-eabi-gcc` y `qemu-system-arm`.
+1. Builds `Examples` and `uvl-baremetal-ref`, the native Lean reference.
+2. Generates, the first time only, the C for Init in `.lake/baremetal/init-c`
+   (about 3 minutes).
+3. Creates the bundle in `.lake/baremetal/bundle`.
+4. Compares `frame0`/`frame1.rgb565` against the reference in three builds:
+   - 64-bit host;
+   - 32-bit host (`gcc -m32`) with a 96 KB pool;
+   - Cortex-M3 under QEMU, when `arm-none-eabi-gcc` and `qemu-system-arm` are installed.
 
-Para usar el bundle en otro proyecto, añade `uvl_bundle.cmake` y compila
-`UVL_BUNDLE_SOURCES` con `UVL_BUNDLE_INCLUDE` por delante del include del
-toolchain de Lean. No hay que enlazar contra `libleanrt` ni contra `libInit`.
+To use the bundle in another project, include `uvl_bundle.cmake` and compile
+`UVL_BUNDLE_SOURCES` with `UVL_BUNDLE_INCLUDE` ahead of the Lean toolchain's
+include directory. There is no need to link against `libleanrt` or `libInit`.
