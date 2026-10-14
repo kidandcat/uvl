@@ -120,8 +120,8 @@ def flexOf : Widget → Option Nat
   | .expanded f _ => some (Max.max f 1)
   | _ => none
 
-/-- Lay out `w` under constraints `c`. -/
-partial def layout (w : Widget) (c : Constraints) : Result c :=
+/-- Lay out `w` under constraints `c`. Total: recursion is on the widget tree. -/
+def layout (w : Widget) (c : Constraints) : Result c :=
   match w with
   | .empty => leaf c ⟨0, 0⟩ .none
   | .text s scale col =>
@@ -161,25 +161,26 @@ partial def layout (w : Widget) (c : Constraints) : Result c :=
     let totalFlex := children.foldl (fun t ch => t + (flexOf ch).getD 0) 0
     -- Lay out all children with the given cross-axis bounds.
     let run (crossMin crossHi : Nat) : List (FitItem c) :=
-      let fit (ch : Widget) (mMin mMax : Nat) : FitItem c :=
+      let fit (ch : Widget) (_h : ch ∈ children) (mMin mMax : Nat) : FitItem c :=
         if vertical then (layout ch (c.within crossMin crossHi mMin mMax)).fitWithin
         else (layout ch (c.within mMin mMax crossMin crossHi)).fitWithin
       -- Phase 1: inflexible children, in order, each limited to the space still free.
-      let (used, firstPass) := children.foldl (init := (0, (#[] : Array (Option (FitItem c)))))
-        fun (used, acc) ch =>
+      let (used, firstPass) := children.attach.foldl
+        (init := (0, (#[] : Array (Option (FitItem c)))))
+        fun (used, acc) ⟨ch, hch⟩ =>
           match flexOf ch with
           | some _ => (used, acc.push none)
           | none =>
-            let k := fit ch 0 (mainMax - gaps - used)
+            let k := fit ch hch 0 (mainMax - gaps - used)
             (used + mainOf k.child.size, acc.push (some k))
       -- Phase 2: flexible children share the remaining space.
       let free := mainMax - gaps - used
-      (children.zip firstPass.toList).map fun (ch, slot) =>
+      (children.attach.zip firstPass.toList).map fun (⟨ch, hch⟩, slot) =>
         match slot with
         | some k => k
         | none =>
           let share := free * (flexOf ch).getD 0 / Max.max totalFlex 1
-          fit ch share share
+          fit ch hch share share
     let kids0 := run 0 crossMax
     -- `stretch`: relayout every child at the common cross size (the largest
     -- natural one, or the parent's minimum if bigger), like CSS `align-items: stretch`.

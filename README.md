@@ -101,6 +101,8 @@ Tests/        imágenes golden, decodificador PNG de test, test driver
 * **Ningún hijo se sale de su padre.** El árbol posicionado `Placed s` está indexado por su
   tamaño y cada hijo lleva la prueba `x + child.w ≤ s.w ∧ y + child.h ≤ s.h`; un árbol con
   *overflow* simplemente no tipa.
+* **El layout siempre termina.** `layout` es una función total (recursión bien fundada sobre
+  el árbol de widgets), no `partial`.
 
 ### Rasterizador
 
@@ -115,9 +117,8 @@ Tests/        imágenes golden, decodificador PNG de test, test driver
 
 ## Próximos pasos
 
-1. `layout` es `partial` (el árbol es inductivo anidado); probar terminación.
-2. Texto con salto de línea y parser TrueType + atlas MSDF.
-3. Modelo TEA (`view : State → Widget`, `update : Msg → State → State`) con `Event` unificado
+1. Texto con salto de línea y parser TrueType + atlas MSDF.
+2. Modelo TEA (`view : State → Widget`, `update : Msg → State → State`) con `Event` unificado
    y *hit testing* sobre `Placed`.
-4. Runner desktop en C (SDL3) que copie el `ByteArray` a una textura a 60 FPS.
-5. Backend `webgpu.h` y build con Emscripten.
+3. Runner desktop en C (SDL3) que copie el `ByteArray` a una textura a 60 FPS.
+4. Backend `webgpu.h` y build con Emscripten.
