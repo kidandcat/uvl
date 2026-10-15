@@ -1,0 +1,16 @@
+menu "UVL board"
+
+    choice UVL_BOARD
+        prompt "Board"
+        default UVL_BOARD_DEVKIT_ST7789
+        help
+            Display wiring, panel geometry and buttons (see main/config.h).
+
+        config UVL_BOARD_DEVKIT_ST7789
+            bool "ESP32 DevKit + 320x240 ST7789 module"
+
+        config UVL_BOARD_TDISPLAY
+            bool "LilyGO T-Display (ST7789 135x240, landscape)"
+    endchoice
+
+endmenu

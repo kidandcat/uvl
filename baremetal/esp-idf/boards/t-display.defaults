@@ -1,0 +1,4 @@
+# LilyGO T-Display. Defaults only apply to a fresh sdkconfig:
+#   rm -f sdkconfig
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;boards/t-display.defaults" set-target esp32
+CONFIG_UVL_BOARD_TDISPLAY=y

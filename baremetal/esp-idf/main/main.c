@@ -25,11 +25,7 @@ static uint8_t *tiles[2];
 static const struct {
     gpio_num_t pin;
     uint8_t key;
-} keys[] = {
-    {PIN_KEY_UP, UVL_KEY_UP},
-    {PIN_KEY_DOWN, UVL_KEY_DOWN},
-    {PIN_KEY_ENTER, UVL_KEY_ENTER},
-};
+} keys[] = {KEYS};
 #define NKEYS (sizeof keys / sizeof keys[0])
 
 void uvl_on_panic(const char *msg, int fatal) {
@@ -78,6 +74,7 @@ static void lcd_init(void) {
     ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel, LCD_INVERT));
     ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel, LCD_SWAP_XY));
     ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel, LCD_MIRROR_X, LCD_MIRROR_Y));
+    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel, LCD_GAP_X, LCD_GAP_Y));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel, true));
 
     gpio_set_direction(PIN_LCD_BL, GPIO_MODE_OUTPUT);
@@ -110,12 +107,14 @@ void app_main(void) {
     lcd_init();
     for (unsigned i = 0; i < NKEYS; i++) {
         gpio_set_direction(keys[i].pin, GPIO_MODE_INPUT);
-        gpio_set_pull_mode(keys[i].pin, GPIO_PULLUP_ONLY);
+        if (GPIO_IS_VALID_OUTPUT_GPIO(keys[i].pin)) gpio_set_pull_mode(keys[i].pin, GPIO_PULLUP_ONLY);
     }
 
     uvl_rt_init();
     uvl_state s = uvl_init(LCD_WIDTH, LCD_HEIGHT, TILE_W, TILE_H);
+    int64_t t0 = esp_timer_get_time();
     s = draw_frame(s);
+    printf("uvl: %dx%d, first frame %lld ms\n", LCD_WIDTH, LCD_HEIGHT, (esp_timer_get_time() - t0) / 1000);
 
     bool down[NKEYS] = {false};
     int64_t last = esp_timer_get_time();

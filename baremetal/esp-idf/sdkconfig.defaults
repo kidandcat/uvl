@@ -2,3 +2,6 @@
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+# The main loop polls the keys every 5 ms; at the default 100 Hz that delay
+# rounds down to 0 ticks and starves the idle task (task watchdog).
+CONFIG_FREERTOS_HZ=1000

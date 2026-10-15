@@ -152,15 +152,41 @@ go to UART0 at 115200 baud (GP0/GP1).
 ## ESP32 (ESP-IDF 5.x)
 
 `baremetal/esp-idf/` is an ESP-IDF project. Its `uvl` component compiles the
-bundle, and `main/main.c` drives a 320×240 ST7789 through `esp_lcd`, with two
-DMA-capable tile buffers. The pins are in `main/config.h`. Like the Pico
-build, it is cross-compiled but has not been run on hardware yet.
+bundle, and `main/main.c` drives an ST7789 through `esp_lcd`, with two
+DMA-capable tile buffers. The board is a Kconfig choice (`UVL board`), with
+pins, panel geometry and buttons in `main/config.h`:
+
+| Board | Panel | Buttons | Status |
+| --- | --- | --- | --- |
+| ESP32 DevKit + ST7789 module (default) | 320×240 | GPIO 0 up, 35 down, 34 enter | cross-compiled only |
+| LilyGO T-Display | 135×240, used as 240×135 landscape | GPIO 35 up, 0 down | runs on hardware |
 
 ```sh
 . $IDF_PATH/export.sh
 baremetal/tools/test.sh          # also builds .lake/baremetal/esp-idf/build/uvl_esp32.bin
 cd .lake/baremetal/esp-idf && idf.py -p /dev/ttyUSB0 flash monitor
 ```
+
+For the T-Display, select the board when the `sdkconfig` is created (a
+defaults file only applies to a fresh `sdkconfig`), and flash at 460800 baud
+(921600 fails with its WCH USB-serial bridge):
+
+```sh
+rm -f sdkconfig
+idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;boards/t-display.defaults" set-target esp32
+idf.py -p /dev/cu.usbserial-* -b 460800 flash monitor
+```
+
+The bundle is chosen with `UVL_BUNDLE` when CMake configures the project;
+pass `-DUVL_BUNDLE=...` to `idf.py` to switch an existing build. Any
+`Examples.BareMetal*` module can be bundled with `uvl_bundle.py --entry`:
+`Examples.BareMetalClock` is a stopwatch driven only by ticks, handy on a
+board with no input. On the T-Display at 240 MHz it redraws in about 455 ms
+per frame (the counter, with card shadows and a chart, takes about 4.2 s).
+
+`sdkconfig.defaults` sets `CONFIG_FREERTOS_HZ=1000`: at the default 100 Hz the
+main loop's 5 ms idle delay rounds to zero ticks, the main task never yields
+and the task watchdog fires on the idle task.
 
 With ESP-IDF 5.4.1 on an ESP32, the build uses 656 KB of flash code and 121 KB
 of DRAM (112 KB `.bss`, including the 96 KB pool) out of 181 KB.
