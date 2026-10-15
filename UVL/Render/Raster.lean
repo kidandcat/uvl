@@ -432,14 +432,29 @@ def drawGlyphs (fb : FrameBuffer w h) (ctx : Ctx w h) (atlas : MSDF.Atlas)
     (quads : Array MSDF.GlyphQuad) (paint : Paint) : FrameBuffer w h :=
   let inv := ctx.m.inverse
   let scale := ctx.m.scaleFactor
+  let solid := match paint with | .solid col => some col | _ => none
   quads.foldl (init := fb) fun fb q =>
     let c := atlas.cell q.glyph
     if c.w <= 0 then fb else
     let tex := atlas.glyphTexels q.glyph
     let px := q.size * scale
-    fillCoverage fb ctx ((ctx.m.mapRect (atlas.quadRect q)).inflate 1.0) paint fun p =>
-      let l := inv.apply p
-      MSDF.coverage (MSDF.sample tex 0 c ((l.x - q.x) / q.size) ((l.y - q.y) / q.size)) px
+    -- device pixel → texel coordinates, as one affine map (no per-pixel Vec2)
+    let k := 1 / (q.size * c.texel)
+    let t := Affine.compose { a := k, d := k, e := -q.x * k - c.x / c.texel - 0.5,
+                              f := -q.y * k - c.y / c.texel - 0.5 } inv
+    let cl := ctx.clipTo ((ctx.m.mapRect (atlas.quadRect q)).inflate 1.0)
+    foldRange cl.y0 cl.y1 cl.hy fb fun fb y =>
+      let py := ctx.cy y.val
+      let rx := t.c * py + t.e
+      let ry := t.d * py + t.f
+      foldRange cl.x0 cl.x1 cl.hx fb fun fb x =>
+        let pxc := ctx.cx x.val
+        let a := MSDF.coverage (MSDF.sampleTexel tex 0 (t.a * pxc + rx) (t.b * pxc + ry)) px
+        if a <= 0.0 then fb else
+        let col := match solid with
+          | some col => col
+          | none => paint.colorAt (inv.apply ⟨pxc, py⟩)
+        fb.blend x y col a
 
 partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → FrameBuffer w h
   | .fill (.path p rule) paint => fillPolys fb ctx (p.flatten ctx.m) rule paint

@@ -92,31 +92,43 @@ end Atlas
 
 @[inline] def median (r g b : Float) : Float := Max.max (Min.min r g) (Min.min (Max.max r g) b)
 
-/-- Signed distance (ems, positive inside) at em point `(u, v)` of cell `c`
-whose texels start at `tex[off]`: bilinear interpolation of each channel, then
-the median. -/
-def sample (tex : FloatArray) (off : Nat) (c : Cell) (u v : Float) : Float :=
+/-- Signed distance (ems, positive inside) at texel coordinates `(tx, ty)` of a
+cell whose texels start at `tex[off]` (texel centres at integers, clamped to the
+edge): bilinear interpolation of each channel, then the median. -/
+def sampleTexel (tex : FloatArray) (off : Nat) (tx ty : Float) : Float :=
   let last := (cellSize - 1).toF
-  let tx := (u - c.x) / c.texel - 0.5
-  let ty := (v - c.y) / c.texel - 0.5
   let fx := tx.floor
   let fy := ty.floor
   let ax := tx - fx
   let ay := ty - fy
-  let x0 := (Min.min (Max.max fx 0) last).toUInt32.toNat
-  let x1 := (Min.min (Max.max (fx + 1) 0) last).toUInt32.toNat
-  let y0 := (Min.min (Max.max fy 0) last).toUInt32.toNat
-  let y1 := (Min.min (Max.max (fy + 1) 0) last).toUInt32.toNat
-  let at_ (x y k : Nat) : Float := tex[off + (y * cellSize + x) * 3 + k]!
-  let chan (k : Nat) : Float :=
-    let v00 := at_ x0 y0 k
-    let v10 := at_ x1 y0 k
-    let v01 := at_ x0 y1 k
-    let v11 := at_ x1 y1 k
+  -- written out (no local functions) so the compiled loop does not allocate
+  let x0 := (Min.min (Max.max fx 0) last).toUSize
+  let x1 := (Min.min (Max.max (fx + 1) 0) last).toUSize
+  let y0 := (Min.min (Max.max fy 0) last).toUSize
+  let y1 := (Min.min (Max.max (fy + 1) 0) last).toUSize
+  let o := off.toUSize
+  let row := cellSize.toUSize
+  let i00 := o + (y0 * row + x0) * 3
+  let i10 := o + (y0 * row + x1) * 3
+  let i01 := o + (y1 * row + x0) * 3
+  let i11 := o + (y1 * row + x1) * 3
+  let r := lerp2 (tex.get! i00.toNat) (tex.get! i10.toNat) (tex.get! i01.toNat) (tex.get! i11.toNat) ax ay
+  let g := lerp2 (tex.get! (i00 + 1).toNat) (tex.get! (i10 + 1).toNat) (tex.get! (i01 + 1).toNat)
+    (tex.get! (i11 + 1).toNat) ax ay
+  let b := lerp2 (tex.get! (i00 + 2).toNat) (tex.get! (i10 + 2).toNat) (tex.get! (i01 + 2).toNat)
+    (tex.get! (i11 + 2).toNat) ax ay
+  median r g b
+where
+  @[inline] lerp2 (v00 v10 v01 v11 ax ay : Float) : Float :=
     let top := v00 + ax * (v10 - v00)
     let bot := v01 + ax * (v11 - v01)
     top + ay * (bot - top)
-  median (chan 0) (chan 1) (chan 2)
+
+/-- Signed distance (ems, positive inside) at em point `(u, v)` of cell `c`
+whose texels start at `tex[off]`: bilinear interpolation of each channel, then
+the median. -/
+@[inline] def sample (tex : FloatArray) (off : Nat) (c : Cell) (u v : Float) : Float :=
+  sampleTexel tex off ((u - c.x) / c.texel - 0.5) ((v - c.y) / c.texel - 0.5)
 
 /-- Coverage of a pixel from the sampled distance: `d` ems at `pxPerEm` pixels
 per em, through a one-pixel ramp. -/
@@ -269,6 +281,75 @@ structure Near where
 @[inline] def Near.better (n : Near) (dist dot : Float) : Bool :=
   dist < n.dist - 1.0e-12 || (dist <= n.dist + 1.0e-12 && dot < n.dot)
 
+/-- Running result of the nearest-edge search for one texel: the nearest
+candidate per channel and overall, and the winding number. -/
+structure Search where
+  r : Near := {}
+  g : Near := {}
+  b : Near := {}
+  all : Near := {}
+  wind : Int := 0
+deriving Inhabited
+
+/-- Segment `k` of a flat segment table (`segStride` floats each:
+`ax ay bx by mask extA extB`). -/
+def segStride : Nat := 7
+
+/-- The nearest-edge search for the texel centre `(px, py)` over segments
+`k..n` of the flat table `t`. A loop with scalar arguments, so that it runs
+without allocating except when a candidate improves. -/
+def search (t : FloatArray) (n : Nat) (px py : Float) (k : Nat) (acc : Search) : Search :=
+  if k < n then
+    let o := k * segStride
+    let ax := t.get! o; let ay := t.get! (o + 1)
+    let bx := t.get! (o + 2); let by_ := t.get! (o + 3)
+    let mask := (t.get! (o + 4)).toUInt8
+    let extA := t.get! (o + 5) > 0
+    let extB := t.get! (o + 6) > 0
+    let abx := bx - ax
+    let aby := by_ - ay
+    let apx := px - ax
+    let apy := py - ay
+    let l2 := abx * abx + aby * aby
+    let tt := (apx * abx + apy * aby) / l2
+    let tc := Min.min (Max.max tt 0) 1
+    let dx := apx - tc * abx
+    let dy := apy - tc * aby
+    let d2 := dx * dx + dy * dy
+    -- winding number of a horizontal ray to the right
+    let wind :=
+      if (ay <= py && py < by_) || (by_ <= py && py < ay) then
+        let xc := ax + (py - ay) * abx / aby
+        if xc > px then acc.wind + (if by_ > ay then 1 else -1) else acc.wind
+      else acc.wind
+    -- farther than every candidate this segment could replace: only the
+    -- winding number can change (the bound is padded, so results are exact)
+    let bound := Max.max acc.all.dist <| Max.max (if mask % 2 == 1 then acc.r.dist else 0) <|
+      Max.max (if mask / 2 % 2 == 1 then acc.g.dist else 0) (if mask / 4 % 2 == 1 then acc.b.dist else 0)
+    let bound := bound * 1.000001 + 1.0e-9
+    if bound < 1.0e29 && d2 > bound * bound then
+      search t n px py (k + 1) { acc with wind }
+    else
+    let dist := Float.sqrt d2
+    let cross := abx * apy - aby * apx
+    let len := Float.sqrt l2
+    let sgn := if cross < 0 then -1.0 else 1.0
+    let dot := if (tt < 0 || tt > 1) && dist > 0 then
+      ((abx * dx + aby * dy) / (len * dist)).abs else 0
+    let pseudo := if (tt < 0 && extA) || (tt > 1 && extB) then cross / len else sgn * dist
+    let acc := if acc.all.better dist dot || wind != acc.wind ||
+        (mask % 2 == 1 && acc.r.better dist dot) || (mask / 2 % 2 == 1 && acc.g.better dist dot) ||
+        (mask / 4 % 2 == 1 && acc.b.better dist dot) then
+      { all := if acc.all.better dist dot then { dist, dot, pseudo := sgn * dist } else acc.all
+        r := if mask % 2 == 1 && acc.r.better dist dot then { dist, dot, pseudo } else acc.r
+        g := if mask / 2 % 2 == 1 && acc.g.better dist dot then { dist, dot, pseudo } else acc.g
+        b := if mask / 4 % 2 == 1 && acc.b.better dist dot then { dist, dot, pseudo } else acc.b
+        wind }
+      else acc
+    search t n px py (k + 1) acc
+  else acc
+termination_by n - k
+
 /-- Texels of one glyph cell for the outline `p` (ems, y down). -/
 def generate (p : Path) (c : Cell) : FloatArray := Id.run do
   let segs := (segments p).filter fun s => s.a.x != s.b.x || s.a.y != s.b.y
@@ -276,6 +357,9 @@ def generate (p : Path) (c : Cell) : FloatArray := Id.run do
   if segs.isEmpty then
     for _ in [0:cellFloats] do out := out.push (-1.0)
     return out
+  let table := segs.foldl (init := FloatArray.emptyWithCapacity (segs.size * segStride)) fun t s =>
+    t.push s.a.x |>.push s.a.y |>.push s.b.x |>.push s.b.y |>.push s.mask.toFloat
+      |>.push (if s.extA then 1 else 0) |>.push (if s.extB then 1 else 0)
   -- texel values before the sign is fixed, and whether each texel is inside
   let mut raw : Array (Float × Float × Float × Float) := #[]
   let mut agree : Int := 0
@@ -283,42 +367,14 @@ def generate (p : Path) (c : Cell) : FloatArray := Id.run do
     for i in [0:cellSize] do
       let px := c.x + (i.toF + 0.5) * c.texel
       let py := c.y + (j.toF + 0.5) * c.texel
-      let mut r : Near := {}
-      let mut g : Near := {}
-      let mut b : Near := {}
-      let mut all : Near := {}
-      let mut wind : Int := 0
-      for s in segs do
-        let abx := s.b.x - s.a.x
-        let aby := s.b.y - s.a.y
-        let apx := px - s.a.x
-        let apy := py - s.a.y
-        let l2 := abx * abx + aby * aby
-        let t := (apx * abx + apy * aby) / l2
-        let tc := Min.min (Max.max t 0) 1
-        let dx := apx - tc * abx
-        let dy := apy - tc * aby
-        let dist := Float.sqrt (dx * dx + dy * dy)
-        let cross := abx * apy - aby * apx
-        let len := Float.sqrt l2
-        let sgn := if cross < 0 then -1.0 else 1.0
-        let dot := if (t < 0 || t > 1) && dist > 0 then
-          ((abx * dx + aby * dy) / (len * dist)).abs else 0
-        let pseudo := if (t < 0 && s.extA) || (t > 1 && s.extB) then cross / len else sgn * dist
-        -- winding number of a horizontal ray to the right
-        if (s.a.y <= py && py < s.b.y) || (s.b.y <= py && py < s.a.y) then
-          let xc := s.a.x + (py - s.a.y) * abx / aby
-          if xc > px then wind := wind + (if s.b.y > s.a.y then 1 else -1)
-        if all.better dist dot then all := { dist, dot, pseudo := sgn * dist }
-        if s.mask % 2 == 1 && r.better dist dot then r := { dist, dot, pseudo }
-        if s.mask / 2 % 2 == 1 && g.better dist dot then g := { dist, dot, pseudo }
-        if s.mask / 4 % 2 == 1 && b.better dist dot then b := { dist, dot, pseudo }
-      let inside := wind != 0
+      let res := search table segs.size px py 0 {}
+      let all := res.all
+      let inside := res.wind != 0
       let sd := if inside then all.dist else -all.dist
       -- does the edge orientation say "inside" where the winding number does?
       if all.dist > 1.0e-9 then
         agree := agree + (if (all.pseudo > 0) == inside then 1 else -1)
-      raw := raw.push (r.pseudo, g.pseudo, b.pseudo, sd)
+      raw := raw.push (res.r.pseudo, res.g.pseudo, res.b.pseudo, sd)
   -- contour orientation decides the sign of the pseudo-distances; flip them
   -- so that inside is positive
   let flip := if agree < 0 then -1.0 else 1.0

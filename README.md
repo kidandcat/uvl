@@ -73,7 +73,8 @@ With `msdf := true` (or `Text.linesOpsMSDF`), glyphs are drawn from the font's *
 atlas** ([Render/MSDF.lean](UVL/Render/MSDF.lean)) instead: each glyph is turned once, in
 Lean, into a 32×32 grid of three signed distances (edge coloring at corners, pseudo-distances,
 sign fixed by winding number), and drawing costs a bilinear lookup and a median per pixel at
-any size, rotation or scale. Cells are generated on first use (about 4 ms per glyph). On the
+any size, rotation or scale. Cells are generated on first use (about 2.5 ms per glyph), and on the CPU an MSDF line
+draws faster than its outlines (540 characters at 14 px: about 15 ms vs 19 ms per 800×600 frame). On the
 GPU the atlas is a buffer that persists across frames: each glyph's cell is uploaded once.
 
 ![msdf](Tests/golden/msdf.png)
@@ -364,5 +365,4 @@ Tests/        golden images, test PNG decoder, test driver
 ## Next steps
 
 1. Accessibility and IME composition for text input.
-2. Faster CPU sampling of MSDF glyphs (today outlines are about 2.5× faster on the CPU;
-   MSDF is the better choice on the GPU).
+2. Make MSDF the default for UI text once its small-size rendering matches outlines.
