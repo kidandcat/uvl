@@ -14,6 +14,8 @@ baremetal/
   tools/uvl_bundle.py    gathers the generated C + reachable Init/Std into a compilable bundle
   tools/gen_c.sh         generates C for toolchain modules (Init/Std/Lean ship only as .a)
   tools/test.sh          end-to-end test (64/32-bit host + QEMU)
+  tools/tdisplay.sh      builds and flashes the stopwatch example on a LilyGO T-Display
+  tools/Dockerfile       Linux image for uvl_bundle.py on macOS (needs GNU ld)
   host/main.c            harness: applies events and streams frames tile by tile
   qemu/                  startup + linker script for mps2-an385 (Cortex-M3)
 ```
@@ -167,22 +169,51 @@ baremetal/tools/test.sh          # also builds .lake/baremetal/esp-idf/build/uvl
 cd .lake/baremetal/esp-idf && idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-For the T-Display, select the board when the `sdkconfig` is created (a
-defaults file only applies to a fresh `sdkconfig`), and flash at 460800 baud
-(921600 fails with its WCH USB-serial bridge):
-
-```sh
-rm -f sdkconfig
-idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;boards/t-display.defaults" set-target esp32
-idf.py -p /dev/cu.usbserial-* -b 460800 flash monitor
-```
-
 The bundle is chosen with `UVL_BUNDLE` when CMake configures the project;
 pass `-DUVL_BUNDLE=...` to `idf.py` to switch an existing build. Any
-`Examples.BareMetal*` module can be bundled with `uvl_bundle.py --entry`:
-`Examples.BareMetalClock` is a stopwatch driven only by ticks, handy on a
-board with no input. On the T-Display at 240 MHz it redraws in about 455 ms
-per frame (the counter, with card shadows and a chart, takes about 4.2 s).
+`Examples.BareMetal*` module can be bundled with `uvl_bundle.py --entry`.
+
+### Example: LilyGO T-Display stopwatch
+
+[`Examples/Clock.lean`](../Examples/Clock.lean) is an uptime stopwatch driven
+only by ticks, so it needs no buttons; [`Examples/BareMetalClock.lean`](../Examples/BareMetalClock.lean)
+exports it through the C ABI. On a LilyGO T-Display (ESP32, 1.14" ST7789V) it
+fills the 240×135 landscape screen and redraws on every tick, about 455 ms
+per frame at 240 MHz, with 39 KB live and 73 KB peak of the 96 KB pool. It has been run
+on real hardware.
+
+With ESP-IDF 5.x installed and the board on USB:
+
+```sh
+. $IDF_PATH/export.sh
+baremetal/tools/tdisplay.sh --monitor          # or: tdisplay.sh /dev/ttyUSB0
+```
+
+The script builds the Lean code, bundles `Examples.BareMetalClock` into
+`.lake/baremetal/bundle-tdisplay`, builds the firmware in
+`.lake/baremetal/esp-tdisplay` with the T-Display board selected, and flashes
+it. `UVL_ENTRY=Examples.BareMetalCounter` bundles the counter instead (GPIO 35
+is up and GPIO 0 down; it redraws in about 4.2 s, mostly card shadows and the
+chart). On macOS, `uvl_bundle.py` needs GNU ld, so the script bundles in a
+Linux container built from [`tools/Dockerfile`](tools/Dockerfile) (Colima or
+Docker; the repository must be under a directory the VM shares, such as
+`$HOME`).
+
+By hand, the board is selected when the `sdkconfig` is created (a defaults
+file only applies to a fresh `sdkconfig`), and the board's WCH USB-serial
+bridge needs 460800 baud (921600 fails):
+
+```sh
+cd .lake/baremetal/esp-tdisplay        # a copy of baremetal/esp-idf
+rm -f sdkconfig
+UVL_BUNDLE=... idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;boards/t-display.defaults" set-target esp32
+UVL_BUNDLE=... idf.py -p /dev/cu.usbserial-* -b 460800 flash monitor
+```
+
+The serial monitor prints one line per frame with its time and the pool's
+live and peak bytes.
+
+### Notes
 
 `sdkconfig.defaults` sets `CONFIG_FREERTOS_HZ=1000`: at the default 100 Hz the
 main loop's 5 ms idle delay rounds to zero ticks, the main task never yields

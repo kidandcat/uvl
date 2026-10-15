@@ -18,7 +18,7 @@ platform only has to provide a *framebuffer* and a stream of events.
 | 6. Fonts | TrueType parser in Lean, embedded UVL Sans, kerning and wrapping, `label`/`paragraph`; MSDF atlas generated in Lean, persistent on the GPU, identical sampling on CPU and GPU | ✅ |
 | 7. Controls | Pointer capture, keyboard focus, wheel routing; slider, checkbox, text field, scroll view; incremental GPU uploads | ✅ |
 | 8. Animation and editing | Runtime clock, blinking caret, hover fade-in, `Tween` with easing curves; text selection (drag, double-click, Shift, Ctrl+A), word navigation, the system clipboard on web and desktop; multi-line `textArea` | ✅ |
-| Bare metal | Tiled rendering (RGB565 / 1-bit, identical to the full frame), C runtime without `libleanrt` tested on ARM Cortex-M3 (QEMU); see [`baremetal/`](baremetal/README.md) | in progress |
+| Bare metal | Tiled rendering (RGB565 / 1-bit, identical to the full frame), C runtime without `libleanrt` tested on ARM Cortex-M3 (QEMU) and running on an ESP32 LilyGO T-Display; see [`baremetal/`](baremetal/README.md) | in progress |
 
 ## Quick start
 
