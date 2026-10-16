@@ -64,6 +64,8 @@ inductive Widget (Msg : Type) where
   /-- `child` is shown only in the "on" half of the runtime's blink cycle (which
   restarts on every keyboard event, so a caret stays visible while typing). -/
   | blink (child : Widget Msg)
+  /-- Accessibility information for `child` (see `Layout.Semantics`). -/
+  | semantics (s : Semantics) (child : Widget Msg)
 deriving Inhabited
 
 variable {Msg : Type}
@@ -167,6 +169,9 @@ def layout (w : Widget Msg) (c : Constraints) : Result Msg c :=
   | .blink child =>
     let k := (layout child (c.within c.minW c.maxW c.minH c.maxH)).fitWithin
     finish c .blink k.child.size.w k.child.size.h [k] fun _ => [(0, 0)]
+  | .semantics sem child =>
+    let k := (layout child (c.within c.minW c.maxW c.minH c.maxH)).fitWithin
+    finish c (.semantics sem) k.child.size.w k.child.size.h [k] fun _ => [(0, 0)]
   | .action a child =>
     let k := (layout child (c.within c.minW c.maxW c.minH c.maxH)).fitWithin
     finish c (.action a) k.child.size.w k.child.size.h [k] fun _ => [(0, 0)]

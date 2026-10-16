@@ -445,6 +445,48 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     }
   }
 
+  // Accessibility: the app's semantic tree (Runtime.semantics) mirrored as
+  // invisible DOM elements over the canvas, with ARIA roles, labels and
+  // values. Screen readers read them; activating one clicks its centre.
+  const a11y = document.createElement('div');
+  Object.assign(a11y.style, { position: 'fixed', left: '0', top: '0', width: '0', height: '0',
+    overflow: 'visible', pointerEvents: 'none', color: 'transparent', zIndex: '-1' });
+  document.body.appendChild(a11y);
+  state.a11y = a11y;
+  let lastTree = null;
+  function syncSemantics() {
+    const r = canvas.getBoundingClientRect();
+    Object.assign(a11y.style, { left: `${r.left}px`, top: `${r.top}px` });
+    const tree = mod.UTF8ToString(mod._uvl_semantics());
+    if (tree === lastTree) return;
+    lastTree = tree;
+    const sx = r.width / w, sy = r.height / h;
+    a11y.replaceChildren(...tree.split('\n').filter((l) => l).map((line) => {
+      const [role, label, value, checked, focused, x, y, nw, nh] = line.split('\t');
+      const tag = role === 'button' ? 'button' : role === 'heading' ? 'h2' : 'div';
+      const el = document.createElement(tag);
+      if (tag === 'div' && role !== 'text') el.setAttribute('role', role);
+      if (role === 'text' || role === 'heading' || role === 'button') el.textContent = label;
+      else if (label) el.setAttribute('aria-label', label);
+      if (role === 'slider') el.setAttribute('aria-valuetext', value);
+      if (role === 'textbox') { el.textContent = value; if (focused === '1') el.setAttribute('aria-current', 'true'); }
+      if (checked !== '-') el.setAttribute('aria-checked', checked === '1' ? 'true' : 'false');
+      if (role !== 'text' && role !== 'heading' && tag !== 'button') el.tabIndex = -1;
+      Object.assign(el.style, { position: 'absolute', left: `${x * sx}px`, top: `${y * sy}px`,
+        width: `${nw * sx}px`, height: `${nh * sy}px`, margin: '0', padding: '0', border: '0',
+        background: 'transparent', color: 'transparent', overflow: 'hidden', font: 'inherit' });
+      el.dataset.uvl = role;
+      // assistive technology activates elements with a click: click the app there
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        const cx = +x + nw / 2, cy = +y + nh / 2;
+        push(EV.move, cx, cy); push(EV.down, cx, cy, 1); push(EV.up, cx, cy, 1);
+        pump(performance.now());
+      });
+      return el;
+    }));
+  }
+
   // keyboard and clipboard events, on the canvas and on the hidden textarea
   function bindKeys(el, isText) {
     el.addEventListener('keydown', (e) => {
@@ -567,6 +609,7 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
       draw();
     }
     syncInput();
+    if (r === 1) syncSemantics();
     // copied without a copy event (e.g. the key was not a native shortcut)
     const text = takeClipboard();
     if (text) navigator.clipboard?.writeText(text).catch(() => {});

@@ -45,6 +45,7 @@ extern lean_object *uvl_host_mark_clean(lean_object *r);
 extern lean_object *uvl_host_invalidate(lean_object *r);
 extern lean_object *uvl_host_take_clipboard(lean_object *r);
 extern lean_object *uvl_host_input_rect(lean_object *r);
+extern lean_object *uvl_host_semantics(lean_object *r);
 extern lean_object *uvl_gpu_batch_prims(lean_object *b);
 extern lean_object *uvl_gpu_batch_data(lean_object *b);
 extern uint32_t uvl_gpu_batch_count(lean_object *b);
@@ -290,6 +291,16 @@ EMSCRIPTEN_KEEPALIVE double *uvl_input_rect(void) {
   }
   lean_dec_ref(a);
   return p;
+}
+
+/* The accessibility tree (see AnyRuntime.semantics), NUL-terminated, valid
+ * until the next call. */
+EMSCRIPTEN_KEEPALIVE const char *uvl_semantics(void) {
+  static lean_object *tree = NULL;
+  if (tree) lean_dec_ref(tree);
+  lean_inc(g_rt);
+  tree = uvl_host_semantics(g_rt);
+  return lean_string_cstr(tree);
 }
 
 /* Text the app copied (Ctrl+C / Ctrl+X) since the last call, NUL-terminated,

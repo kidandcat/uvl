@@ -95,6 +95,33 @@ inductive Action (Msg : Type) where
 
 instance {Msg : Type} [Inhabited Msg] : Inhabited (Action Msg) := ⟨.tap default⟩
 
+/-- Accessibility roles (what a screen reader announces). -/
+inductive Role where
+  | text
+  | button
+  | checkbox
+  | slider
+  | textbox
+  | heading
+deriving Inhabited, Repr, BEq
+
+def Role.name : Role → String
+  | .text => "text"
+  | .button => "button"
+  | .checkbox => "checkbox"
+  | .slider => "slider"
+  | .textbox => "textbox"
+  | .heading => "heading"
+
+/-- What a node means to assistive technology. An interactive node with an
+empty `label` takes the text of the `text` nodes inside it. -/
+structure Semantics where
+  role : Role
+  label : String := ""
+  value : String := ""
+  checked : Option Bool := none
+deriving Inhabited, Repr
+
 /-- What a node draws behind its children. -/
 inductive Visual (Msg : Type) where
   | none
@@ -109,6 +136,8 @@ inductive Visual (Msg : Type) where
   /-- Children shown only in the "on" half of the runtime's blink cycle (a
   text caret). -/
   | blink
+  /-- Accessibility information about the node (draws nothing). -/
+  | semantics (s : Semantics)
 deriving Inhabited
 
 mutual
@@ -187,7 +216,7 @@ def PointerState.inside (p : PointerState) (r : Rect) : Bool :=
 
 def Visual.toOps (v : Visual Msg) (r : Rect) : Array RenderOp :=
   match v with
-  | .none | .tap .. | .action _ | .blink => #[]
+  | .none | .tap .. | .action _ | .blink | .semantics _ => #[]
   | .deco d => d.toOps r
   | .text s scale col => #[.clip r #[.text ⟨r.x, r.y⟩ s scale.toF col]]
   | .custom draw => #[.clip r (draw r)]
@@ -296,6 +325,56 @@ def Placed.targets {s : Size} (ox oy : Nat) : Placed Msg s → List (Target Msg)
 def Kids.targets {s : Size} (ox oy : Nat) : Kids Msg s → List (Target Msg)
   | .nil _ => []
   | .cons x y _ child _ _ rest => child.targets (ox + x) (oy + y) ++ Kids.targets ox oy rest
+end
+
+/-- A node of the accessibility tree, flattened: its meaning and absolute
+bounds. -/
+structure SemNode where
+  sem : Semantics
+  x : Nat
+  y : Nat
+  w : Nat
+  h : Nat
+deriving Inhabited, Repr
+
+private def isInteractive : Role → Bool
+  | .text | .heading => false
+  | _ => true
+
+private def joinLabels (ns : List SemNode) : String :=
+  ns.foldl (fun acc n => if acc.isEmpty then n.sem.label else acc ++ " " ++ n.sem.label) ""
+
+/-- Finish an interactive node: an empty label is taken from the text inside,
+which is then not announced again on its own. -/
+private def withKids (n : SemNode) (kids : List SemNode) : List SemNode :=
+  if isInteractive n.sem.role && n.sem.label.isEmpty then
+    let texts := kids.filter fun k => !isInteractive k.sem.role
+    { n with sem := { n.sem with label := joinLabels texts } } ::
+      kids.filter fun k => isInteractive k.sem.role
+  else n :: kids
+
+mutual
+/-- The accessibility tree in paint order. Tap targets without semantics are
+buttons; scrolled-out content is left out. -/
+def Placed.semantics {s : Size} (ox oy : Nat) : Placed Msg s → List SemNode
+  | .node s v kids =>
+    let below := Kids.semantics ox oy kids
+    let at_ (sem : Semantics) : SemNode := { sem, x := ox, y := oy, w := s.w, h := s.h }
+    match v with
+    | .semantics sem => withKids (at_ sem) below
+    | .tap .. =>
+      -- an explicit role inside (a checkbox) wins
+      if below.any (fun k => isInteractive k.sem.role) then below
+      else withKids (at_ { role := .button }) below
+    | .text str _ _ => at_ { role := .text, label := str } :: below
+    | _ => below
+  | .scroll s offset _ _ _ content _ =>
+    (content.semantics ox oy).filterMap fun n =>
+      if n.y + n.h ≤ oy + offset || n.y ≥ oy + offset + s.h then none
+      else some { n with y := n.y - offset }
+def Kids.semantics {s : Size} (ox oy : Nat) : Kids Msg s → List SemNode
+  | .nil _ => []
+  | .cons x y _ child _ _ rest => child.semantics (ox + x) (oy + y) ++ Kids.semantics ox oy rest
 end
 
 /-- Index of the topmost target under `(px, py)`. -/

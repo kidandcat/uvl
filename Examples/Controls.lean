@@ -58,7 +58,7 @@ def view (m : Model) : UI.Widget Msg :=
   pad 20 <| row (gap := 20) (align := .start) [
     card <| col (gap := 14) [
       label "Controls" (size := 24) (color := Color.hex 0x0D47A1),
-      row (gap := 10) [label "Volume" (size := 15), slider m.volume .volume (width := 180),
+      row (gap := 10) [label "Volume" (size := 15), slider m.volume .volume (width := 180) (label := "Volume"),
         label s!"{(m.volume * 100).round.toUInt32}%" (size := 15)],
       row (gap := 10) [label "Level" (size := 15), meter m.meter.value],
       checkbox m.options[0]! (.toggle 0) "Dark grid lines" (size := 15),

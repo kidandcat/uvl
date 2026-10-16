@@ -239,6 +239,23 @@ def run : IO Bool := do
   -- scroll view
   let some sv := find rt isScroll | check "scroll target" false
   let (sx, sy) := ((sv.x + 50).toF, (sv.y + 50).toF)
+  -- accessibility tree
+  let sem := (AnyRuntime.semantics ⟨rt⟩)
+  if (← IO.getEnv "UVL_PRINT_SEMANTICS").isSome then IO.println sem
+  let nodes := rt.semantics
+  let has (p : Layout.SemNode → Bool) := nodes.any p
+  ok := (← check s!"accessibility: {nodes.size} nodes with roles, labels and values"
+    (has (fun n => n.sem.role == .slider && n.sem.label == "Volume" && n.sem.value == "40%") &&
+     has (fun n => n.sem.role == .checkbox && n.sem.label == "Dark grid lines" && n.sem.checked == some true) &&
+     has (fun n => n.sem.role == .checkbox && n.sem.label == "Show legend" && n.sem.checked == some false) &&
+     has (fun n => n.sem.role == .textbox && n.sem.label == "Type your name…") &&
+     has (fun n => n.sem.role == .button && n.sem.label == "Item 1: Lean") &&
+     !has (fun n => n.sem.role == .text && n.sem.label == "Dark grid lines") &&
+     !has (fun n => n.sem.label == "Item 20: SDF"))) && ok
+  let scrolledSem := (rt.simulate [.pointerMove sx sy, .scroll 0 100]).semantics
+  ok := (← check "accessibility: scrolled-out rows leave the tree, scrolled-in rows join it"
+    (!scrolledSem.any (fun n => n.sem.label == "Item 1: Lean") &&
+      scrolledSem.any (fun n => n.sem.label == "Item 10: SDF"))) && ok
   let r1 := rt.simulate [.pointerMove sx sy, .scroll 0 100]
   ok := (← check s!"scroll: the wheel moves the list ({r1.model.scroll} px)" (r1.model.scroll == 100)) && ok
   let r2 := r1.simulate [.scroll 0 100000]

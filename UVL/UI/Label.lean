@@ -27,7 +27,7 @@ def textOps (font : Text.Font) (lines : Array String) (size : Float) (color : Co
 def label (s : String) (size : Float := 16) (color : Color := Color.darkGray)
     (font : Text.Font := Text.uvlSans ()) (msdf : Bool := false) : Widget Msg :=
   let (w, h) := Text.linesSize font #[s] size
-  canvas w h (textOps font #[s] size color msdf)
+  .semantics { role := .text, label := s } (canvas w h (textOps font #[s] size color msdf))
 
 /-- TrueType text wrapped at spaces (and at `'\n'`) to `maxWidth` pixels. -/
 def paragraph (s : String) (maxWidth : Nat) (size : Float := 16)
@@ -35,6 +35,6 @@ def paragraph (s : String) (maxWidth : Nat) (size : Float := 16)
     (msdf : Bool := false) : Widget Msg :=
   let lines := Text.wrap font s size maxWidth.toFloat
   let (w, h) := Text.linesSize font lines size
-  canvas w h (textOps font lines size color msdf)
+  .semantics { role := .text, label := s } (canvas w h (textOps font lines size color msdf))
 
 end UVL.UI

@@ -152,6 +152,17 @@ function diff(a, b) {
         await page.mouse.move(ax, ay);
         await page.mouse.wheel(0, -200);
       });
+      // the accessibility mirror: find the checkbox by its label and activate it
+      const a11y = await page.evaluate(() => [...window.uvl.state.a11y.children].map((e) =>
+        `${e.dataset.uvl}:${e.textContent || e.getAttribute('aria-label') || ''}`));
+      console.log(`accessibility tree: ${a11y.length} nodes (${a11y.slice(0, 6).join(', ')}, …)`);
+      if (!a11y.includes('checkbox:Show legend')) throw new Error('no "Show legend" checkbox in the accessibility tree');
+      await step('activate a checkbox through the accessibility tree', () => page.evaluate(() => {
+        [...window.uvl.state.a11y.children].find((e) => e.getAttribute('aria-label') === 'Show legend').click();
+      }));
+      const checked = await page.evaluate(() => [...window.uvl.state.a11y.children]
+        .find((e) => e.getAttribute('aria-label') === 'Show legend').getAttribute('aria-checked'));
+      if (checked !== 'true') throw new Error(`"Show legend" is aria-checked=${checked} after activation`);
       const [lx, ly] = await at(4); // scroll view
       await step('scroll the list', async () => {
         await page.mouse.move(lx, ly);

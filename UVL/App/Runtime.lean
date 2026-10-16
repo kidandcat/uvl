@@ -151,6 +151,10 @@ candidate window, or a hidden native text field). -/
 def inputRect (rt : Runtime Model Msg) : Option Window :=
   rt.focusedTarget.map fun t => ⟨t.x, t.y, t.w, t.h⟩
 
+/-- The accessibility tree of the current view (see `Layout.Semantics`). -/
+def semantics (rt : Runtime Model Msg) : Array SemNode :=
+  (rt.tree.2.semantics 0 0).toArray
+
 /-- The pending clipboard text, and the runtime with it cleared. -/
 def takeClipboard (rt : Runtime Model Msg) : Option String × Runtime Model Msg :=
   (rt.clipboard, { rt with clipboard := none })

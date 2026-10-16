@@ -37,9 +37,10 @@ variable {Msg : Type}
 /-- A horizontal slider for `value ∈ [lo, hi]`; pressing or dragging sets the
 value under the pointer. -/
 def slider (value : Float) (onChange : Float → Msg) (lo : Float := 0) (hi : Float := 1)
-    (width : Nat := 200) (color : Color := Color.hex 0x1E88E5) : Widget Msg :=
+    (width : Nat := 200) (color : Color := Color.hex 0x1E88E5) (label : String := "") :
+    Widget Msg :=
   let t := clamp01 ((value - lo) / (hi - lo))
-  .action (.drag fun p =>
+  .semantics { role := .slider, label, value := s!"{(t * 100).round.toUInt32}%" } <| .action (.drag fun p =>
       if p.phase == .release then none
       else some (onChange (lo + (hi - lo) * clamp01 ((p.x - 10) / (p.w - 20)))))
     (canvas width 24 fun r =>
@@ -66,7 +67,7 @@ def checkbox (checked : Bool) (onToggle : Msg) (text : String := "") (size : Flo
     else
       #[.fill (.roundedRect r (.all 4)) Color.white,
         .stroke (.roundedRect (r.inflate (-0.75)) (.all 3.5)) 1.5 (Color.hex 0x90A4AE)]
-  onTap onToggle (radius := 4) <|
+  onTap onToggle (radius := 4) <| .semantics { role := .checkbox, checked := some checked } <|
     if text.isEmpty then box else row (gap := 8) [box, label text size]
 
 /-! ### Text field and text area -/
@@ -132,7 +133,7 @@ def textEditor (id : String) (state : TextInput) (onChange : TextInput → Msg)
     let x := (r.x + pad - shiftX + lay.xOf st.cursor).round
     clipTo r #[.fill (.rect ⟨x - 0.5, r.y + pad - scrollY + lay.yOf st.cursor, 1.5, lh⟩) color]
   let st := state
-  .action (.input id (selection := st.selectedText) fun ev =>
+  .semantics { role := .textbox, label := placeholder, value := st.text } <| .action (.input id (selection := st.selectedText) fun ev =>
       match ev, onSubmit with
       | .key .enter, some m => some m
       | _, _ =>

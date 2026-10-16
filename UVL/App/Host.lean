@@ -189,6 +189,22 @@ def inputRect (r : AnyRuntime) : FloatArray :=
   | some w => FloatArray.empty.push w.x.toF |>.push w.y.toF |>.push w.w.toF |>.push w.h.toF
   | none => .empty
 
+/-- The accessibility tree, one line per node:
+`role, label, value, checked (`1`, `0` or `-`), focused (`1` or `0`), x, y, w, h`, separated by tabs
+(tabs and newlines in texts become spaces). -/
+@[export uvl_host_semantics]
+def semantics (r : AnyRuntime) : String :=
+  let clean (s : String) : String := s.map fun c => if c == '\t' || c == '\n' then ' ' else c
+  let focus := r.rt.inputRect
+  r.rt.semantics.foldl (init := "") fun acc n =>
+    let checked := match n.sem.checked with | some true => "1" | some false => "0" | none => "-"
+    let focused : Bool := match focus with
+      | some f => n.sem.role == .textbox && f.x == n.x && f.y == n.y
+      | none => false
+    acc ++ n.sem.role.name ++ "\t" ++ clean n.sem.label ++ "\t" ++ clean n.sem.value ++ "\t" ++
+      checked ++ "\t" ++ (if focused then "1" else "0") ++ "\t" ++ toString n.x ++ "\t" ++
+      toString n.y ++ "\t" ++ toString n.w ++ "\t" ++ toString n.h ++ "\n"
+
 @[export uvl_host_mark_clean]
 def markClean (r : AnyRuntime) : AnyRuntime := ⟨{ r.rt with dirty := false }⟩
 

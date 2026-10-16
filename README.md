@@ -206,6 +206,12 @@ hidden `<textarea>` placed over the focused field, which also brings up virtual 
 touch devices; the desktop shell forwards SDL's text-editing events and points the candidate
 window at the field (`Runtime.inputRect`).
 
+**Accessibility.** Widgets describe themselves with `Semantics` (role, label, value, checked):
+labels and paragraphs are text, controls declare their role, and any other tap target is a
+button named after the text inside it. `Runtime.semantics` flattens the view into that tree
+(scrolled-out content is left out), and the browser shell mirrors it as invisible ARIA elements
+over the canvas, so screen readers can read the app and activate its buttons and checkboxes.
+
 Both keep an undo history: Ctrl+Z undoes, Ctrl+Y or Ctrl+Shift+Z redoes, and a run of typed
 (or deleted) characters is one step. Ctrl+C and Ctrl+X put the selection in
 `Runtime.clipboard`, which shells hand to the system clipboard (the browser's copy event, or
@@ -370,5 +376,5 @@ Tests/        golden images, test PNG decoder, test driver
 
 ## Next steps
 
-1. Accessibility (a semantic tree for screen readers).
+1. Accessibility on desktop (platform accessibility APIs) and keyboard operation of sliders.
 2. Make MSDF the default for UI text once its small-size rendering matches outlines.
