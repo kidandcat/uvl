@@ -3,3 +3,5 @@
 /Tests/out
 web/dist/
 web/dist-*/
+android/dist/
+android/smoke/

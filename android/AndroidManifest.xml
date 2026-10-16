@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A NativeActivity app: the APK has no Java code, only lib/<abi>/libuvl.so
+     (android/android_shell.c plus the Lean app). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.kidandcat.uvl"
+    android:versionCode="1"
+    android:versionName="0.1">
+
+  <application
+      android:label="UVL"
+      android:hasCode="false"
+      android:extractNativeLibs="false"
+      android:theme="@android:style/Theme.Material.Light.NoActionBar">
+    <activity
+        android:name="android.app.NativeActivity"
+        android:exported="true"
+        android:launchMode="singleTask"
+        android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"
+        android:windowSoftInputMode="adjustResize">
+      <meta-data android:name="android.app.lib_name" android:value="uvl" />
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>

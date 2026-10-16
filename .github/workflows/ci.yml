@@ -140,3 +140,40 @@ jobs:
             web-dashboard.png
             web-text.png
             web-controls.png
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          build: false
+          test: false
+      - name: Cache the Android Lean runtime and Init
+        uses: actions/cache@v4
+        with:
+          path: .lake/build/android
+          key: android-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('android/build.sh') }}
+      - name: Build the APK (arm64-v8a for phones, x86_64 for the emulator)
+        run: ANDROID_ABIS="arm64-v8a x86_64" android/build.sh
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          pip install pillow
+      - name: Smoke test on an emulator (launch, tap, type)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: android/smoke.sh android/dist/uvl-example.apk android/smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-app
+          path: |
+            android/dist/uvl-example.apk
+            android/smoke/*.png

@@ -205,6 +205,16 @@ def semantics (r : AnyRuntime) : String :=
       checked ++ "\t" ++ (if focused then "1" else "0") ++ "\t" ++ toString n.x ++ "\t" ++
       toString n.y ++ "\t" ++ toString n.w ++ "\t" ++ toString n.h ++ "\n"
 
+/-- Does the runtime need `tick`s (`Runtime.animating`)? Shells that block
+waiting for input use it to decide whether to keep stepping. -/
+@[export uvl_host_animating]
+def animating (r : AnyRuntime) : UInt8 := if r.rt.animating then 1 else 0
+
+/-- Does a text input have the keyboard focus? Shells with an on-screen
+keyboard show it while this is 1. -/
+@[export uvl_host_text_focus]
+def textFocus (r : AnyRuntime) : UInt8 := if r.rt.focus.isSome then 1 else 0
+
 @[export uvl_host_mark_clean]
 def markClean (r : AnyRuntime) : AnyRuntime := ⟨{ r.rt with dirty := false }⟩
 
