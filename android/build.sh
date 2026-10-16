@@ -41,8 +41,8 @@ SDK=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}
 [ -n "$SDK" ] && [ -d "$SDK" ] || { echo "error: set ANDROID_HOME to an Android SDK" >&2; exit 1; }
 HOST_TAG=$(ls "$NDK/toolchains/llvm/prebuilt" | head -1)
 LLVM=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin
-BUILD_TOOLS=$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)
-PLATFORM=$(ls -d "$SDK"/platforms/android-* | sort -V | tail -1)
+BUILD_TOOLS=$(ls -d "$SDK"/build-tools/* | grep -E '/[0-9.]+$' | sort -V | tail -1)
+PLATFORM=$(ls -d "$SDK"/platforms/android-* | grep -E '/android-[0-9]+$' | sort -V | tail -1)
 
 PREFIX=$(lean --print-prefix)
 VERSION=$(lean --version | sed -E 's/.*version ([0-9][^ ,]*).*/\1/')

@@ -79,7 +79,8 @@ the SDL and browser shells do:
 
 ## Testing
 
-CI builds the APK for `arm64-v8a` and `x86_64`, runs it on an x86_64 emulator (API 34) and
+CI builds the APK for `arm64-v8a` and `x86_64`, runs it on an x86_64 emulator (API 34, Pixel 6
+profile at 420 dpi) and
 checks with [`smoke.sh`](smoke.sh) that tapping "+" and typing into the text field change the
 screen. The APK and the screenshots are uploaded as the `android-app` artifact.
 
