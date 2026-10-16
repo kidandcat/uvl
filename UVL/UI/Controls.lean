@@ -73,9 +73,12 @@ def checkbox (checked : Bool) (onToggle : Msg) (text : String := "") (size : Flo
 
 /-- The editor shared by `textField` and `textArea`: `width × height` pixels,
 text inset by 8 pixels. -/
-def textEditor (id : String) (st : TextInput) (onChange : TextInput → Msg)
+def textEditor (id : String) (state : TextInput) (onChange : TextInput → Msg)
     (width height : Nat) (size : Float) (placeholder : String) (onSubmit : Option Msg)
     (font : Text.Font) (color : Color) (multiline : Bool) : Widget Msg :=
+  -- what is drawn: the text with any IME composition inserted at the cursor
+  let st := state.shown
+  let composing := state.composing?
   let pad := 8.0
   let innerW := width.toFloat - 2 * pad
   let innerH := height.toFloat - 2 * pad
@@ -97,20 +100,24 @@ def textEditor (id : String) (st : TextInput) (onChange : TextInput → Msg)
       #[.fill (.roundedRect box (.all 6)) Color.white,
         if st.focused then .stroke (.roundedRect (r.inflate (-1)) (.all 6)) 2 color
         else .stroke (.roundedRect box (.all 6)) 1 (Color.hex 0xB0BEC5)]
+    -- one rectangle per line of the character range [a, b): top offset and height
+    let rangeOps (a b : Nat) (top hgt : Float) (paint : Color) : Array RenderOp :=
+      (List.range lay.lines.size).foldl (init := #[]) fun acc k =>
+        let l := lay.lines[k]!
+        let s := Max.max a l.start
+        let e := Min.min b l.stop
+        -- a selected line break shows as a little extra width
+        let nl := if b > l.stop && !l.soft then size * 0.3 else 0
+        if (s > e || (s == e && nl == 0)) || !visible k then acc else
+        let ps := lay.stops[k]!
+        let x0 := (ox + ps[s - l.start]!).round
+        let x1 := (ox + ps[e - l.start]! + nl).round
+        acc.push (.fill (.rect ⟨x0, oy + k.toFloat * lh + top, x1 - x0, hgt⟩) paint)
     let highlight : Array RenderOp := match st.selection? with
-      | some (a, b) =>
-        let sel := if st.focused then color.withAlpha 0.25 else Color.hex 0xCFD8DC
-        (List.range lay.lines.size).foldl (init := #[]) fun acc k =>
-          let l := lay.lines[k]!
-          let s := Max.max a l.start
-          let e := Min.min b l.stop
-          -- a selected line break shows as a little extra width
-          let nl := if b > l.stop && !l.soft then size * 0.3 else 0
-          if (s > e || (s == e && nl == 0)) || !visible k then acc else
-          let ps := lay.stops[k]!
-          let x0 := (ox + ps[s - l.start]!).round
-          let x1 := (ox + ps[e - l.start]! + nl).round
-          acc.push (.fill (.rect ⟨x0, oy + k.toFloat * lh, x1 - x0, lh⟩) sel)
+      | some (a, b) => rangeOps a b 0 lh (if st.focused then color.withAlpha 0.25 else Color.hex 0xCFD8DC)
+      | none => #[]
+    let underline : Array RenderOp := match composing with
+      | some (a, b) => rangeOps a b (lh - 2) 1.5 (Color.hex 0x263238)
       | none => #[]
     let textOps :=
       if st.text.isEmpty then
@@ -120,10 +127,11 @@ def textEditor (id : String) (st : TextInput) (onChange : TextInput → Msg)
         if !visible k then acc else
         acc ++ Text.linesOps font #[(chars.extract l.start l.stop).foldl String.push ""] size
           (Color.hex 0x263238) ⟨ox, oy + k.toFloat * lh⟩
-    frame ++ clipTo r (highlight ++ textOps)
+    frame ++ clipTo r (highlight ++ textOps ++ underline)
   let caret := canvas width height fun r =>
     let x := (r.x + pad - shiftX + lay.xOf st.cursor).round
     clipTo r #[.fill (.rect ⟨x - 0.5, r.y + pad - scrollY + lay.yOf st.cursor, 1.5, lh⟩) color]
+  let st := state
   .action (.input id (selection := st.selectedText) fun ev =>
       match ev, onSubmit with
       | .key .enter, some m => some m

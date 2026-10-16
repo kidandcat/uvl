@@ -183,6 +183,9 @@ structure TextInput where
   /-- Kind of the last edit (0: none or a cursor move, 1: typing, 2: deleting
   characters), so that a run of keystrokes is undone as one step. -/
   lastEdit : Nat := 0
+  /-- Text an input method (IME) is composing at the cursor, shown underlined
+  until it is committed. -/
+  preedit : String := ""
 deriving Inhabited, Repr
 
 namespace TextInput
@@ -190,11 +193,27 @@ namespace TextInput
 /-- Field-by-field equality (written out: see `Runtime.sameTarget`). -/
 def same (a b : TextInput) : Bool :=
   a.text == b.text && a.cursor == b.cursor && a.focused == b.focused && a.scroll == b.scroll &&
-    a.lastEdit == b.lastEdit &&
+    a.lastEdit == b.lastEdit && a.preedit == b.preedit &&
     match a.anchor, b.anchor with
     | some x, some y => x == y
     | none, none => true
     | _, _ => false
+
+/-- The character range an IME composition occupies in `shown`, if any. -/
+def composing? (st : TextInput) : Option (Nat × Nat) :=
+  if st.preedit.isEmpty then none else
+  let c := Min.min st.cursor st.text.length
+  some (c, c + st.preedit.length)
+
+/-- What a text editor draws: the text with any IME composition inserted at the
+cursor, the cursor after it (and no selection while composing). -/
+def shown (st : TextInput) : TextInput :=
+  match st.composing? with
+  | some (c, e) =>
+    let cs := st.text.toList
+    { st with text := ofChars (cs.take c ++ st.preedit.toList ++ cs.drop c), cursor := e,
+              anchor := none }
+  | none => st
 
 /-- The selected character range `[start, stop)`, if any. -/
 def selection? (st : TextInput) : Option (Nat × Nat) :=
@@ -287,7 +306,8 @@ def apply (st : TextInput) (layout : String → TextLayout) (multiline : Bool :=
   let c := Min.min st.cursor n
   let st' : TextInput := match ev with
     | .focus => { st with focused := true }
-    | .blur => { st with focused := false, anchor := none }
+    | .blur => { st with focused := false, anchor := none, preedit := "" }
+    | .compose s => { st with preedit := s }
     | .press x y => let p := lay.hit x y; { st with cursor := p, anchor := some p }
     | .drag x y => st.moveTo (lay.hit x y) true
     | .doubleClick x y =>
@@ -301,6 +321,7 @@ def apply (st : TextInput) (layout : String → TextLayout) (multiline : Bool :=
       if viewHeight ≤ 0 then st else { st with scroll := Max.max 0 (Min.min maxScroll (st.scroll + dy)) }
     | .cut => st.deleteSelection
     | .text s =>
+      let st := { st with preedit := "" }
       let ins := (s.toList.map fun ch => if ch == '\r' then '\n' else ch).filter (typeable multiline)
       if ins.isEmpty then st else
       match st.selection? with
@@ -330,7 +351,7 @@ def apply (st : TextInput) (layout : String → TextLayout) (multiline : Bool :=
       | k, _ => if isMove k then st.moveTo (move lay n c k) false else st
   -- undo history
   let st' := match ev with
-    | .undo | .redo | .focus | .blur | .wheel _ => st'
+    | .undo | .redo | .focus | .blur | .wheel _ | .compose _ => st'
     | _ =>
       if st'.text != st.text then
         let kind := match ev, st.selection? with

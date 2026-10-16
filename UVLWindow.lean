@@ -23,6 +23,7 @@ namespace UVL.SDL
 @[extern "uvl_sdl_ticks"] opaque ticksMs : IO UInt64
 @[extern "uvl_sdl_close"] opaque close : IO Unit
 @[extern "uvl_sdl_set_clipboard"] opaque setClipboard (text : @& String) : IO Unit
+@[extern "uvl_sdl_set_input_rect"] opaque setInputRect (x y w h : UInt32) : IO Unit
 /-- Push a synthetic left click into SDL's event queue (for smoke tests). -/
 @[extern "uvl_sdl_push_click"] opaque pushClick (x y : Float) : IO Unit
 /-- Create the GPU renderer on the window; `false` means CPU frames. -/
@@ -63,7 +64,8 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
           close
           throw <| IO.userError "GPU frame differs from the CPU frame"
     close
-  let rec loop (rt : Runtime Model Msg) (last : UInt64) (frames : Nat) : IO Unit := do
+  let rec loop (rt : Runtime Model Msg) (last : UInt64) (frames : Nat)
+      (lastArea : Option Window := none) : IO Unit := do
     let raw ← pollRaw
     let now ← ticksMs
     let mut rt := rt.step raw (now - last).toNat.toF
@@ -71,6 +73,10 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
     let (copied, rt') := rt.takeClipboard
     rt := rt'
     if let some text := copied then setClipboard text
+    -- keep the IME candidate window next to the focused input
+    let area := rt.inputRect
+    if area != lastArea then
+      if let some r := area then setInputRect r.x.toUInt32 r.y.toUInt32 r.w.toUInt32 r.h.toUInt32
     let mut frames := frames
     if rt.dirty then
       if gpu then
@@ -90,7 +96,7 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
     if rt.app.animating rt.model || rt.hoverFade < 1 then wait 1
     else if rt.animating then wait 50
     else wait 250
-    loop rt now frames
+    loop rt now frames area
   loop (Runtime.start app w h) (← ticksMs) 0
 
 end UVL.SDL

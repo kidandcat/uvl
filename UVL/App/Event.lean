@@ -45,6 +45,9 @@ inductive Event where
   | keyDown (key : Key)
   | keyUp (key : Key)
   | textInput (s : String)
+  /-- Text being composed by an input method (IME), not committed yet; `""`
+  when the composition ends. The committed text then arrives as `textInput`. -/
+  | compose (s : String)
   | resize (w h : Nat)
   /-- Animation frame; `dt` in seconds. -/
   | tick (dt : Float)

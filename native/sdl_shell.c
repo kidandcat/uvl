@@ -138,6 +138,14 @@ LEAN_EXPORT lean_obj_res uvl_sdl_poll(lean_obj_arg world) {
       while ((n = utf8_next(s, &cp)) > 0) { arr = push(arr, 7, cp, 0, 0); s += n; }
       break;
     }
+    case SDL_EVENT_TEXT_EDITING: {
+      /* IME composition: the codepoints, then an end marker (Event.compose) */
+      const unsigned char *s = (const unsigned char *)(e.edit.text ? e.edit.text : "");
+      uint32_t cp; int n;
+      while ((n = utf8_next(s, &cp)) > 0) { arr = push(arr, 11, cp, 0, 0); s += n; }
+      arr = push(arr, 12, 0, 0, 0);
+      break;
+    }
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       arr = push(arr, 8, e.window.data1, e.window.data2, 0); break;
     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
@@ -148,6 +156,14 @@ LEAN_EXPORT lean_obj_res uvl_sdl_poll(lean_obj_arg world) {
     }
   }
   return lean_io_result_mk_ok(arr);
+}
+
+/* Where the focused input is, so the IME candidate window appears next to it. */
+LEAN_EXPORT lean_obj_res uvl_sdl_set_input_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                                                lean_obj_arg world) {
+  SDL_Rect r = { (int)x, (int)y, (int)w, (int)h };
+  SDL_SetTextInputArea(win, &r, 0);
+  return lean_io_result_mk_ok(lean_box(0));
 }
 
 LEAN_EXPORT lean_obj_res uvl_sdl_set_clipboard(b_lean_obj_arg text, lean_obj_arg world) {

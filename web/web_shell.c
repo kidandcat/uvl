@@ -44,6 +44,7 @@ extern lean_object *uvl_host_background(lean_object *r);
 extern lean_object *uvl_host_mark_clean(lean_object *r);
 extern lean_object *uvl_host_invalidate(lean_object *r);
 extern lean_object *uvl_host_take_clipboard(lean_object *r);
+extern lean_object *uvl_host_input_rect(lean_object *r);
 extern lean_object *uvl_gpu_batch_prims(lean_object *b);
 extern lean_object *uvl_gpu_batch_data(lean_object *b);
 extern uint32_t uvl_gpu_batch_count(lean_object *b);
@@ -64,6 +65,7 @@ static uint8_t *g_pixels = NULL;     /* RGBA of the last present, owned by g_rt 
 static double g_damage[4 * 16];      /* windows repainted by the last present */
 static uint32_t g_ndamage = 0;
 static double g_target[2];
+static double g_input_rect[4];
 
 /* GPU mode: frames are lowered to primitives for the WebGPU renderer instead
  * of being rasterized here. The primitive and data arrays are converted to
@@ -274,6 +276,20 @@ EMSCRIPTEN_KEEPALIVE const char *uvl_gpu_entry_points_source(void) {
   static lean_object *src = NULL;
   if (!src) src = uvl_gpu_entry_points(lean_box(0));
   return lean_string_cstr(src);
+}
+
+/* Bounds of the focused input as four doubles (x, y, w, h), or NULL when no
+ * input has focus. */
+EMSCRIPTEN_KEEPALIVE double *uvl_input_rect(void) {
+  lean_inc(g_rt);
+  lean_object *a = uvl_host_input_rect(g_rt);
+  double *p = NULL;
+  if (lean_sarray_size(a) == 4) {
+    memcpy(g_input_rect, lean_float_array_cptr(a), sizeof g_input_rect);
+    p = g_input_rect;
+  }
+  lean_dec_ref(a);
+  return p;
 }
 
 /* Text the app copied (Ctrl+C / Ctrl+X) since the last call, NUL-terminated,

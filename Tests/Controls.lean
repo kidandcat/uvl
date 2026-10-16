@@ -221,6 +221,21 @@ def run : IO Bool := do
   let u6 := u2.simulate [.textInput "!"]
   ok := (← check "undo: a new edit clears the redo history"
     (u6.model.name.redo.isEmpty && (u6.simulate undo).model.name.text == "abc")) && ok
+  -- input method composition
+  let c0 := rt.simulate (Runtime.click fx fy ++ [.textInput "ab", .keyDown .left])
+  let c1 := c0.simulate [.compose "ni", .compose "にほ"]
+  let c2 := c1.simulate [.compose "", .textInput "日本"]
+  ok := (← check s!"IME: composition shows at the cursor and commits (\"{c1.model.name.shown.text}\" → \"{c2.model.name.text}\")"
+    (c1.model.name.text == "ab" && c1.model.name.shown.text == "aにほb" && c1.frame != c0.frame &&
+      c2.model.name.text == "a日本b" && c2.model.name.preedit.isEmpty && c2.model.name.cursor == 3)) && ok
+  ok := (← check "IME: the focused input's bounds are exposed to the shell"
+    (c0.inputRect.any (fun w => w.x == f.x && w.w == f.w) && rt.inputRect.isNone)) && ok
+  let decoded := decodeEvents (FloatArray.mk #[11, 0x65E5, 0, 0, 0, 11, 0x672C, 0, 0, 0, 12, 0, 0, 0, 0,
+    12, 0, 0, 0, 0, 7, 0x41, 0, 0, 0, 7, 0x42, 0, 0, 0])
+  ok := (← check "IME: packed composition events decode"
+    (match decoded.toList with
+     | [.compose a, .compose b, .textInput t] => a == "日本" && b == "" && t == "AB"
+     | _ => false)) && ok
   -- scroll view
   let some sv := find rt isScroll | check "scroll target" false
   let (sx, sy) := ((sv.x + 50).toF, (sv.y + 50).toF)

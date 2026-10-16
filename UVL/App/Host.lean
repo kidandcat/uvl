@@ -22,6 +22,8 @@ form that crosses a C ABI easily:
   | 8    | resize       | width, height         |
   | 9    | quit         |                       |
   | 10   | pointer leave|                       |
+  | 11   | composition  | Unicode codepoint (one per event) |
+  | 12   | composition end of update (emits the composed string, `""` to clear) | |
 
   Keycodes follow SDL: printable keys are their codepoint, arrows are
   `0x4000004F` (right) to `0x40000052` (up), Shift is `0x400000E1` and Ctrl
@@ -69,6 +71,7 @@ def buttonOf (b : Float) : MouseButton :=
 /-- Decode a packed event buffer (see the module docs). -/
 def decodeEvents (raw : FloatArray) : Array Event := Id.run do
   let mut out := #[]
+  let mut composing := ""
   for i in [0:raw.size / 5] do
     let k := raw[5 * i]!.toUInt64.toNat
     let a := raw[5 * i + 1]!
@@ -85,7 +88,10 @@ def decodeEvents (raw : FloatArray) : Array Event := Id.run do
       | 8 => some (.resize a.toUInt64.toNat b.toUInt64.toNat)
       | 9 => some .quit
       | 10 => some .pointerLeave
+      | 12 => some (.compose composing)
       | _ => none
+    if k == 11 then composing := composing.push (Char.ofNat a.toUInt64.toNat)
+    if k == 12 then composing := ""
     match ev, out.back? with
     | some (.textInput s), some (Event.textInput t) => out := out.pop.push (.textInput (t ++ s))
     | some e, _ => out := out.push e
@@ -173,6 +179,15 @@ it cleared. Returns a pair so the C shell can keep the runtime unshared. -/
 def takeClipboard (r : AnyRuntime) : String × AnyRuntime :=
   let (c, rt) := r.rt.takeClipboard
   (c.getD "", ⟨rt⟩)
+
+/-- Bounds of the focused input as `x, y, w, h` (`#[]` when no input has
+focus): where the shell puts the IME candidate window or a hidden native
+text field. -/
+@[export uvl_host_input_rect]
+def inputRect (r : AnyRuntime) : FloatArray :=
+  match r.rt.inputRect with
+  | some w => FloatArray.empty.push w.x.toF |>.push w.y.toF |>.push w.w.toF |>.push w.h.toF
+  | none => .empty
 
 @[export uvl_host_mark_clean]
 def markClean (r : AnyRuntime) : AnyRuntime := ⟨{ r.rt with dirty := false }⟩

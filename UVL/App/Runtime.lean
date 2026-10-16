@@ -146,6 +146,11 @@ def copySelection (rt : Runtime Model Msg) : Option (Runtime Model Msg) :=
     if sel.isEmpty then none else some { rt with clipboard := some sel }
   | _ => none
 
+/-- Bounds of the focused input (where a shell places the input method's
+candidate window, or a hidden native text field). -/
+def inputRect (rt : Runtime Model Msg) : Option Window :=
+  rt.focusedTarget.map fun t => ⟨t.x, t.y, t.w, t.h⟩
+
 /-- The pending clipboard text, and the runtime with it cleared. -/
 def takeClipboard (rt : Runtime Model Msg) : Option String × Runtime Model Msg :=
   (rt.clipboard, { rt with clipboard := none })
@@ -308,6 +313,10 @@ def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
       match rt.focus with
       | some id => rt.sendInput id (.text s)
       | none => rt
+    | .compose s =>
+      match rt.focus with
+      | some id => rt.sendInput id (.compose s)
+      | none => rt
     | .tick dt =>
       let time := rt.time + dt
       let blinked := rt.focus.isSome && rt.blinkOn != { rt with time }.blinkOn
@@ -319,7 +328,7 @@ def handle (rt : Runtime Model Msg) (e : Event) : Runtime Model Msg :=
     | _ => rt
   -- keyboard events go to the focused input only
   let toInput := focused && match e with
-    | .keyDown _ | .keyUp _ | .textInput _ => true
+    | .keyDown _ | .keyUp _ | .textInput _ | .compose _ => true
     | _ => false
   if toInput then rt else
   match rt.app.subscriptions e rt.model with

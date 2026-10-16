@@ -114,10 +114,20 @@ function diff(a, b) {
           window.uvl.canvas.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data }));
         });
       });
+      // an input method composing then committing text (through the hidden textarea)
+      await step('IME composition', () => page.evaluate(() => {
+        const ime = window.uvl.state.ime;
+        if (document.activeElement !== ime) throw new Error('the hidden textarea does not have focus');
+        ime.dispatchEvent(new CompositionEvent('compositionstart', { data: '' }));
+        ime.dispatchEvent(new CompositionEvent('compositionupdate', { data: 'e\u0301' }));
+      }));
+      await step('IME commit', () => page.evaluate(() => {
+        window.uvl.state.ime.dispatchEvent(new CompositionEvent('compositionend', { data: '\u00e9' }));
+      }));
       await page.keyboard.press('Control+a');
       const all = await copy();
       console.log(`select all + copy: ${JSON.stringify(all)}`);
-      if (all !== 'Hi UV & Lean!') throw new Error(`copied ${JSON.stringify(all)} after pasting`);
+      if (all !== 'Hi UV & Lean!\u00e9') throw new Error(`copied ${JSON.stringify(all)} after pasting`);
       await step('double-click a word', () => page.mouse.dblclick(tx - 60, ty));
       // the text area is the last target in paint order
       let last = 4;

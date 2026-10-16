@@ -71,6 +71,8 @@ inductive InputEvent where
   | redo
   /-- The wheel turned over the input, in pixels (positive: scroll down). -/
   | wheel (dy : Float)
+  /-- An input method's uncommitted text (`""`: none). -/
+  | compose (s : String)
   /-- Ctrl+A. -/
   | selectAll
   /-- Ctrl+X: the selection was copied to the clipboard, delete it. -/

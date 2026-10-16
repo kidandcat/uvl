@@ -13,7 +13,8 @@
 //                damaged windows of the frame;
 //       canvas2d the same CPU frames through putImageData (no WebGPU).
 
-const EV = { move: 1, down: 2, up: 3, scroll: 4, keyDown: 5, keyUp: 6, text: 7, resize: 8, leave: 10 };
+const EV = { move: 1, down: 2, up: 3, scroll: 4, keyDown: 5, keyUp: 6, text: 7, resize: 8, leave: 10,
+  compose: 11, composeEnd: 12 };
 
 // DOM key names → SDL keycodes (printable keys use their codepoint).
 const KEYS = {
@@ -404,30 +405,60 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     if (nw !== w || nh !== h) push(EV.resize, nw, nh);
   });
 
-  function bind(el) {
-    el.addEventListener('pointermove', (e) => push(EV.move, e.offsetX, e.offsetY));
-    el.addEventListener('pointerdown', (e) => {
-      el.setPointerCapture(e.pointerId);
-      el.focus();
-      push(EV.down, e.offsetX, e.offsetY, button(e));
-    });
-    el.addEventListener('pointerup', (e) => push(EV.up, e.offsetX, e.offsetY, button(e)));
-    el.addEventListener('pointerleave', () => push(EV.leave));
-    el.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? h : 1; // lines / pages to pixels
-      push(EV.scroll, e.deltaX * k, e.deltaY * k);
-    }, { passive: false });
-    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  const pushText = (text) => { for (const ch of text) push(EV.text, ch.codePointAt(0)); };
+  const pushCompose = (text) => {
+    for (const ch of text) push(EV.compose, ch.codePointAt(0));
+    push(EV.composeEnd);
+  };
+
+  // Text input goes through a hidden <textarea> placed over the focused field:
+  // it receives input method (IME) compositions, brings up virtual keyboards
+  // on touch devices, and gives the browser a real place for the caret.
+  const ime = document.createElement('textarea');
+  ime.setAttribute('autocapitalize', 'off');
+  ime.setAttribute('autocomplete', 'off');
+  ime.setAttribute('autocorrect', 'off');
+  ime.spellcheck = false;
+  ime.tabIndex = -1;
+  Object.assign(ime.style, {
+    position: 'fixed', left: '-1000px', top: '0', width: '1px', height: '1px', opacity: '0',
+    padding: '0', border: '0', margin: '0', resize: 'none', overflow: 'hidden',
+    fontSize: '16px', background: 'transparent', color: 'transparent', caretColor: 'transparent',
+    pointerEvents: 'none', zIndex: '-1',
+  });
+  document.body.appendChild(ime);
+  state.ime = ime;
+  let keyHandled = false;
+
+  // focus the hidden textarea while an input has focus in the app, over its bounds
+  function syncInput() {
+    const p = mod._uvl_input_rect();
+    if (p) {
+      const [x, y, rw, rh] = mod.HEAPF64.subarray(p / 8, p / 8 + 4);
+      const r = canvas.getBoundingClientRect();
+      const sx = r.width / w, sy = r.height / h;
+      Object.assign(ime.style, { left: `${r.left + x * sx}px`, top: `${r.top + y * sy}px`,
+        width: `${rw * sx}px`, height: `${rh * sy}px` });
+      if (document.activeElement !== ime) ime.focus({ preventScroll: true });
+    } else if (document.activeElement === ime) {
+      canvas.focus({ preventScroll: true });
+    }
+  }
+
+  // keyboard and clipboard events, on the canvas and on the hidden textarea
+  function bindKeys(el, isText) {
     el.addEventListener('keydown', (e) => {
+      if (e.isComposing || e.keyCode === 229) { keyHandled = false; return; } // the IME has it
       const code = keyCode(e);
+      keyHandled = !!code;
       if (code) push(EV.keyDown, code);
-      if ([...e.key].length === 1 && !e.ctrlKey && !e.metaKey) push(EV.text, e.key.codePointAt(0));
-      if (e.key === 'Tab' || e.key.startsWith('Arrow') || e.key === ' ') e.preventDefault();
+      // printable keys: from the textarea's input events, or from the key here
+      if (!isText && [...e.key].length === 1 && !e.ctrlKey && !e.metaKey) push(EV.text, e.key.codePointAt(0));
+      if (e.key === 'Tab' || e.key.startsWith('Arrow') || e.key === 'Enter' || (!isText && e.key === ' ')) {
+        e.preventDefault();
+      }
     });
     el.addEventListener('keyup', (e) => { const code = keyCode(e); if (code) push(EV.keyUp, code); });
-    // modifiers released while the page was not focused would stay down
-    el.addEventListener('blur', () => { push(EV.keyUp, KEYS.Shift); push(EV.keyUp, KEYS.Control); });
     // Clipboard. Ctrl+C / Ctrl+X reach the app as keys; the browser then fires
     // copy / cut, where the copied text is handed over synchronously (no
     // clipboard permission needed). Pasted text arrives as text input.
@@ -439,9 +470,50 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
     el.addEventListener('copy', copy);
     el.addEventListener('cut', copy);
     el.addEventListener('paste', (e) => {
-      const text = e.clipboardData?.getData('text/plain') ?? '';
-      for (const ch of text) push(EV.text, ch.codePointAt(0));
+      pushText(e.clipboardData?.getData('text/plain') ?? '');
       e.preventDefault();
+    });
+  }
+  bindKeys(ime, true);
+  ime.addEventListener('compositionupdate', (e) => pushCompose(e.data ?? ''));
+  ime.addEventListener('compositionend', (e) => {
+    pushCompose('');
+    pushText(e.data ?? '');
+    ime.value = '';
+  });
+  ime.addEventListener('input', (e) => {
+    if (e.isComposing || e.inputType === 'insertCompositionText') return;
+    if (e.inputType === 'insertText' && e.data) pushText(e.data);
+    // virtual keyboards often delete without a key event
+    else if (e.inputType === 'deleteContentBackward' && !keyHandled) {
+      push(EV.keyDown, KEYS.Backspace); push(EV.keyUp, KEYS.Backspace);
+    }
+    ime.value = '';
+  });
+  // modifiers released while the page was not focused would stay down
+  ime.addEventListener('blur', () => { push(EV.keyUp, KEYS.Shift); push(EV.keyUp, KEYS.Control); });
+
+  function bind(el) {
+    el.addEventListener('pointermove', (e) => push(EV.move, e.offsetX, e.offsetY));
+    el.addEventListener('pointerdown', (e) => {
+      el.setPointerCapture(e.pointerId);
+      el.focus();
+      push(EV.down, e.offsetX, e.offsetY, button(e));
+      // handle the press now, so that a text field focused by it can take the
+      // keyboard inside this user gesture (virtual keyboards need that)
+      pump(performance.now());
+    });
+    el.addEventListener('pointerup', (e) => push(EV.up, e.offsetX, e.offsetY, button(e)));
+    el.addEventListener('pointerleave', () => push(EV.leave));
+    el.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? h : 1; // lines / pages to pixels
+      push(EV.scroll, e.deltaX * k, e.deltaY * k);
+    }, { passive: false });
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+    bindKeys(el, false);
+    el.addEventListener('blur', () => {
+      if (document.activeElement !== ime) { push(EV.keyUp, KEYS.Shift); push(EV.keyUp, KEYS.Control); }
     });
     resizer.disconnect();
     resizer.observe(el);
@@ -494,6 +566,7 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
       state.leanMs = performance.now() - t0;
       draw();
     }
+    syncInput();
     // copied without a copy event (e.g. the key was not a native shortcut)
     const text = takeClipboard();
     if (text) navigator.clipboard?.writeText(text).catch(() => {});

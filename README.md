@@ -200,6 +200,12 @@ editing logic both share): text wraps at the width and at Enter, Up/Down keep th
 position, Home/End go to the ends of the visual line and Ctrl+Home/End to the ends of the
 text, and the contents scroll to keep the cursor in view (or with the wheel).
 
+Input methods (IME) work on both platforms: the text being composed (`Event.compose`) shows
+underlined at the cursor until it is committed. In the browser, text input goes through a
+hidden `<textarea>` placed over the focused field, which also brings up virtual keyboards on
+touch devices; the desktop shell forwards SDL's text-editing events and points the candidate
+window at the field (`Runtime.inputRect`).
+
 Both keep an undo history: Ctrl+Z undoes, Ctrl+Y or Ctrl+Shift+Z redoes, and a run of typed
 (or deleted) characters is one step. Ctrl+C and Ctrl+X put the selection in
 `Runtime.clipboard`, which shells hand to the system clipboard (the browser's copy event, or
@@ -364,5 +370,5 @@ Tests/        golden images, test PNG decoder, test driver
 
 ## Next steps
 
-1. Accessibility and IME composition for text input.
+1. Accessibility (a semantic tree for screen readers).
 2. Make MSDF the default for UI text once its small-size rendering matches outlines.
