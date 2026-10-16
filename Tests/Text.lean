@@ -60,6 +60,23 @@ def run : IO Bool := do
   let mean := sum.toFloat / outl.size.toFloat
   ok := (← check s!"MSDF vs outlines at 48 px: mean |Δ| {mean}, {big} bytes off by > 64"
     (mean < 1.0 && big * 1000 < outl.size)) && ok
+  -- at UI sizes: how far MSDF coverage strays from the exact outline coverage
+  for sz in [11.0, 14.0, 16.0] do
+    let line := "The quick brown fox jumps over 12 lazy dogs"
+    let o := (Raster.render 400 30 (linesOps f #[line] sz Color.black ⟨4, 4⟩)).data
+    let m := (Raster.render 400 30 (linesOpsMSDF f #[line] sz (.solid Color.black) ⟨4, 4⟩)).data
+    let mut tot := 0
+    let mut ink := 0
+    let mut worst := 0
+    for i in [0:o.size] do
+      if i % 4 == 0 then
+        let a := 255 - o[i]!.toNat
+        let b := 255 - m[i]!.toNat
+        tot := tot + (if a > b then a - b else b - a)
+        ink := ink + a
+        worst := Max.max worst (if a > b then a - b else b - a)
+    ok := (← check s!"MSDF vs outlines at {sz} px: coverage error {(tot.toFloat / ink.toFloat * 100)}% of the ink, worst pixel {worst}/255"
+      (tot * 4 < ink)) && ok
   let ops2 := Examples.msdfText
   let b := GPU.Batch.build 560 260 ops2
   let gpu := (GPU.referenceRender 560 260 ops2).data

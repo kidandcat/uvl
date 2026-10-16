@@ -377,4 +377,6 @@ Tests/        golden images, test PNG decoder, test driver
 ## Next steps
 
 1. Accessibility on desktop (platform accessibility APIs) and keyboard operation of sliders.
-2. Make MSDF the default for UI text once its small-size rendering matches outlines.
+2. Close the gap between MSDF and exact outlines at UI sizes (today 7–11% of the ink at
+   11–16 px, measured in `Tests/Text.lean`), then make MSDF the default for UI text; until
+   then outlines stay the default (exact, and no atlas memory on small devices).
