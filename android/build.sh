@@ -154,7 +154,7 @@ for ABI in $ABIS; do
         uv/dns uv/signal uv/system"
     for f in $RT; do echo "$SRC/src/runtime/$f.cpp"; done > "$OBJ/list"
     xargs -P "$JOBS" -I{} sh -c 'f={}; o='"$OBJ"'/$(echo "$f" | md5sum | cut -c1-12).o;
-      '"$CXX"' -std=c++20 '"$CFLAGS"' -I'"$INC"' -I'"$SRC/src"' \
+      '"$CXX"' -std=c++20 -DLEAN_MULTI_THREAD '"$CFLAGS"' -I'"$INC"' -I'"$SRC/src"' \
         -I'"$SRC/src/runtime"' -I'"$UV/include"' -c "$f" -o "$o"' < "$OBJ/list"
     # no OpenSSL on Android: its no-OpenSSL variant only reports a version of 0
     $CXX -std=c++20 $CFLAGS -DLEAN_EMSCRIPTEN -I"$INC" -I"$SRC/src" -c "$SRC/src/runtime/openssl.cpp" -o "$OBJ/openssl.o"
@@ -199,7 +199,8 @@ for ABI in $ABIS; do
   if ! "${LINK[@]}" 2> "$APP/link1.log"; then
     grep -o 'undefined symbol: [A-Za-z0-9_]*' "$APP/link1.log" | cut -d' ' -f3 | sort -u > "$APP/undef" || true
     if [ ! -s "$APP/undef" ]; then cat "$APP/link1.log" >&2; exit 1; fi
-    BAD=$(grep -v -E '^(l_Lean_|l_Std_|initialize_Lean|initialize_Std)' "$APP/undef" || true)
+    # also specializations made in Lean/Std of core functions (`l_List_lookup___at___00Lean_...`)
+    BAD=$(grep -v -E '^(l_.*(Lean|Std)_|initialize_Lean|initialize_Std)' "$APP/undef" || true)
     if [ -n "$BAD" ]; then
       echo "error: undefined symbols that are not compile-time-only:" >&2
       echo "$BAD" >&2

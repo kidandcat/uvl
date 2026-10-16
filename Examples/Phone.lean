@@ -65,7 +65,9 @@ def smooth (xs : List Float) : List Float :=
     s / (hi + 1 - lo).toFloat
 
 def series (m : Model) : List (List Float) :=
-  let raw := m.history.map fun v => (v + 16).toNat.toFloat
+  -- the chart's axis starts at 0: shift the values so the lowest one is 1
+  let lo := m.history.foldl Min.min 0
+  let raw := m.history.map fun v => (v - lo + 1).toNat.toFloat
   let main := if m.options[0]! then smooth raw else raw
   if m.options[1]! then [main, raw.map (fun v => v * m.volume)] else [main]
 

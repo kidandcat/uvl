@@ -18,6 +18,7 @@ platform only has to provide a *framebuffer* and a stream of events.
 | 6. Fonts | TrueType parser in Lean, embedded UVL Sans, kerning and wrapping, `label`/`paragraph`; MSDF atlas generated in Lean, persistent on the GPU, identical sampling on CPU and GPU | ✅ |
 | 7. Controls | Pointer capture, keyboard focus, wheel routing; slider, checkbox, text field, scroll view; incremental GPU uploads | ✅ |
 | 8. Animation and editing | Runtime clock, blinking caret, hover fade-in, `Tween` with easing curves; text selection (drag, double-click, Shift, Ctrl+A), word navigation, the system clipboard on web and desktop; multi-line `textArea` | ✅ |
+| Android | The same apps as a `NativeActivity` APK with no Java code: Lean runtime and `Init` cross-compiled with the NDK, touch, on-screen keyboard, density scaling and insets; tested on an emulator in CI; see [`android/`](android/README.md) | ✅ (CPU rendering) |
 | Bare metal | Tiled rendering (RGB565 / 1-bit, identical to the full frame), C runtime without `libleanrt` tested on ARM Cortex-M3 (QEMU) and running on an ESP32 LilyGO T-Display; see [`baremetal/`](baremetal/README.md) | in progress |
 
 ## Quick start
@@ -32,6 +33,7 @@ lake exe uvl-counter    # desktop app (needs SDL3; renders with wgpu-native)
 lake exe uvl-controls   # slider, checkboxes, text field, scroll view
 lake exe uvl-gpu-check  # GPU renderer vs CPU rasterizer, headless
 web/build.sh            # browser app in web/dist (needs Emscripten)
+android/build.sh        # Android APK in android/dist (needs the NDK and SDK)
 ```
 
 Requires Lean `v4.35.0` (pinned in `lean-toolchain`).
@@ -146,6 +148,8 @@ GPU frame against the CPU one). `lake exe uvl-gpu-check` renders the example sce
 the GPU and compares them with the CPU rasterizer.
 
 * **Browser:** `web/build.sh` compiles the same app to WebAssembly; see below.
+* **Android:** `android/build.sh` packages an app as an APK with a C `NativeActivity` shell;
+  see [android/README.md](android/README.md).
 
 ### Stateful controls
 
