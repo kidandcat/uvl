@@ -11,7 +11,7 @@ platform only has to provide a *framebuffer* and a stream of events.
 | Milestone | Contents | Status |
 | --- | --- | --- |
 | 1. Core and image | Verified `FrameBuffer`, SDF-based 2D primitives, Bézier paths, gradients, shadows, text, CPU rasterizer, PNG/PPM | ✅ |
-| 2. Layout and DSL | *Box constraints* layout engine with invariants in the types, flex (row/col/expanded), stack, `ui!` DSL, charts | ✅ (first version) |
+| 2. Layout and DSL | *Box constraints* layout engine with invariants in the types, flex (row/col/expanded), stack, `ui!` DSL, HTML-like markup, charts | ✅ (first version) |
 | 3. Desktop interactivity | Elm-style runtime (`App`, `Event`), hit testing, hover/press, SDL3 runner | ✅ |
 | 4. GPU and browser | Lean runtime + `Init` compiled to WebAssembly with Emscripten, WebGPU presenter with Canvas 2D fallback, DOM events | ✅ |
 | 5. GPU rendering | Typed shader DSL in Lean that emits WGSL, render ops lowered to GPU primitives, SDFs/paths/text evaluated in the fragment shader, one pipeline per primitive kind; browser (WebGPU) and desktop (wgpu-native); output matches the CPU rasterizer | ✅ |
@@ -98,6 +98,39 @@ def dashboard : UI.Widget Unit := ui! pad 20:
       card:
         lineChart [[3, 5, 4, 8, 7, 11], [1, 2, 4, 3, 6, 5]]
 ```
+
+### HTML-like markup
+
+The same widgets as tags, JSX style ([UI/Html.lean](UVL/UI/Html.lean)). It is compile-time
+syntax, not HTML: there is no parser, DOM or CSS at run time, every tag elaborates to the
+function call you would write by hand, and every mistake (an unknown attribute, a value of the
+wrong type, a mismatched closing tag) is a compile error. So it runs on every target, bare
+metal included. From [Examples/Phone.lean](Examples/Phone.lean):
+
+```lean
+def view (m : Model) : UI.Widget Msg :=
+  <pad n=16>
+    <col gap=14 align=.stretch>
+      <card>
+        <row gap=16 justify=.center>
+          <button size=4 onTap={.dec}>-</button>
+          <label size=44>{m.count}</label>
+          <button size=4 onTap={.inc}>+</button>
+        </row>
+      </card>
+      <checkbox checked={m.options[0]!} onToggle={.toggle 0}>Smooth the chart</checkbox>
+      {m.items.map fun s => <label>{s}</label>}
+    </col>
+  </pad>
+```
+
+* `<f a=v>` calls `UVL.UI.f` (or your own `f`, so your functions are tags too) with the
+  attributes as named arguments; a bare attribute is `true`, and values go to `Option`
+  parameters wrapped in `some` when needed.
+* The content goes to the first parameter not given as an attribute, by its type: text with
+  `{x}` interpolated for a `String`, the children for a `List`, and a single child (or a
+  column of several) for a `Widget`.
+* A `{e}` child is a widget, or a list, array or option of widgets, spliced in.
 
 ### Interactive apps (Elm architecture)
 
@@ -338,7 +371,7 @@ UVL/
   GPU/        typed WGSL DSL, shader kernels, lowering to GPU primitives, reference renderer
   Output/     Deflate/zlib and PNG/PPM in pure Lean
   Layout/     Constraints, Placed (positioned tree), Widget + layout engine
-  UI/         widget API, ui! DSL, charts (bar, line, donut), TrueType labels
+  UI/         widget API, ui! DSL, HTML-like markup, charts (bar, line, donut), TrueType labels
   App/        Event, App and Runtime (Elm architecture, hit testing), Host (C ABI for shells)
   BareMetal/  app shell for microcontrollers (see baremetal/)
 UVLWindow.lean  SDL3 shell (FFI), only used by the uvl-* window executables

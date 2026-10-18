@@ -3,7 +3,7 @@ import UVL
 /-! A phone-sized example (portrait, touch first): a counter with its history
 chart, a slider driving an animated level meter, toggles and a text field.
 It is the app of the Android build (`android/build.sh`), and runs anywhere
-else UVL does. -/
+else UVL does. The view is written in the HTML-like markup (`UVL.UI.Html`). -/
 
 namespace Examples.Phone
 open UVL UI
@@ -72,38 +72,54 @@ def series (m : Model) : List (List Float) :=
   if m.options[1]! then [main, raw.map (fun v => v * m.volume)] else [main]
 
 def view (m : Model) : UI.Widget Msg :=
-  pad 16 <| col (gap := 14) (align := .stretch) [
-    row (gap := 10) [
-      label "UVL" (size := 28) (color := accent),
-      label "on Android" (size := 18) (color := muted),
-      spacer,
-      chip "Lean 4"
-    ],
-    card <| row (gap := 16) (justify := .center) [
-      button "-" (size := 4) (color := Color.hex 0xE53935) (onTap := some .dec),
-      width 120 <| row (justify := .center) [label (toString m.count) (size := 44)],
-      button "+" (size := 4) (color := Color.hex 0x43A047) (onTap := some .inc)
-    ],
-    expanded <| card <| col (gap := 8) (align := .stretch) [
-      row [
-        label "History" (size := 16),
-        spacer,
-        button "Reset" (size := 1) (color := Color.gray) (onTap := some .reset)
-      ],
-      expanded <| lineChart (series m)
-    ],
-    card <| col (gap := 12) [
-      row (gap := 10) [label "Level" (size := 15), slider m.volume .volume (width := 170),
-        label s!"{(m.volume * 100).round.toUInt32}%" (size := 15)],
-      meter m.meter.value,
-      checkbox m.options[0]! (.toggle 0) "Smooth the chart" (size := 15),
-      checkbox m.options[1]! (.toggle 1) "Show the scaled series" (size := 15),
-      textField "name" m.name .name (width := 260) (placeholder := "Type your name…")
-        (onSubmit := some .submit),
-      label (if m.greeted.isEmpty then "Tap the field and press Enter" else s!"Hello, {m.greeted}!")
-        (size := 15) (color := muted)
-    ]
-  ]
+  <pad n=16>
+    <col gap=14 align=.stretch>
+      <row gap=10>
+        <label size=28 color={accent}>UVL</label>
+        <label size=18 color={muted}>on Android</label>
+        <spacer/>
+        <chip>Lean 4</chip>
+      </row>
+      <card>
+        <row gap=16 justify=.center>
+          <button size=4 color={Color.hex 0xE53935} onTap={.dec}>-</button>
+          <width w=120>
+            <row justify=.center><label size=44>{m.count}</label></row>
+          </width>
+          <button size=4 color={Color.hex 0x43A047} onTap={.inc}>+</button>
+        </row>
+      </card>
+      <expanded>
+        <card>
+          <col gap=8 align=.stretch>
+            <row>
+              <label size=16>History</label>
+              <spacer/>
+              <button size=1 color={Color.gray} onTap={.reset}>Reset</button>
+            </row>
+            <expanded><lineChart series={series m}/></expanded>
+          </col>
+        </card>
+      </expanded>
+      <card>
+        <col gap=12>
+          <row gap=10>
+            <label size=15>Level</label>
+            <slider value={m.volume} onChange={.volume} width=170/>
+            <label size=15>{(m.volume * 100).round.toUInt32}%</label>
+          </row>
+          <meter v={m.meter.value}/>
+          <checkbox checked={m.options[0]!} onToggle={.toggle 0} size=15>Smooth the chart</checkbox>
+          <checkbox checked={m.options[1]!} onToggle={.toggle 1} size=15>Show the scaled series</checkbox>
+          <textField id="name" st={m.name} onChange={.name} width=260
+            placeholder="Type your name…" onSubmit={.submit}/>
+          <label size=15 color={muted}>
+            {if m.greeted.isEmpty then "Tap the field and press Enter" else s!"Hello, {m.greeted}!"}
+          </label>
+        </col>
+      </card>
+    </col>
+  </pad>
 
 def app : App Model Msg where
   init := {}

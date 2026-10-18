@@ -6,6 +6,7 @@ import Tests.Damage
 import Tests.GPU
 import Tests.Text
 import Tests.Controls
+import Tests.Html
 
 /-!
 Test driver (`lake test`).

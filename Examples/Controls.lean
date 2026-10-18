@@ -2,7 +2,8 @@ import UVL
 
 /-! Interactive example: stateful controls (slider, checkboxes, text field and
 a scroll view, a multi-line text area), with all their state in the model (Elm
-architecture), and a level meter that follows the slider with a tween. -/
+architecture), and a level meter that follows the slider with a tween. The view
+is written in the HTML-like markup (`UVL.UI.Html`). -/
 
 namespace Examples.Controls
 open UVL UI
@@ -55,31 +56,55 @@ def wordCount (s : String) : Nat :=
   ((s.split fun c => c == ' ' || c == '\n').filter (!·.isEmpty)).length
 
 def view (m : Model) : UI.Widget Msg :=
-  pad 20 <| row (gap := 20) (align := .start) [
-    card <| col (gap := 14) [
-      label "Controls" (size := 24) (color := Color.hex 0x0D47A1),
-      row (gap := 10) [label "Volume" (size := 15), slider m.volume .volume (width := 180) (label := "Volume"),
-        label s!"{(m.volume * 100).round.toUInt32}%" (size := 15)],
-      row (gap := 10) [label "Level" (size := 15), meter m.meter.value],
-      checkbox m.options[0]! (.toggle 0) "Dark grid lines" (size := 15),
-      checkbox m.options[1]! (.toggle 1) "Show legend" (size := 15),
-      textField "name" m.name .name (width := 260) (placeholder := "Type your name…")
-        (onSubmit := some .submit),
-      label (if m.greeted.isEmpty then "Press Enter to greet" else s!"Hello, {m.greeted}!")
-        (size := 15) (color := Color.hex 0x546E7A)
-    ],
-    card (padding := 8) <| width 200 <| scrollView m.scroll .scrolled (height := 280) <|
-      col (gap := 2) (align := .stretch) (items.zipIdx.map fun (s, i) =>
-        onTap (.pick i) (radius := 6) <|
-          decorated (fill := if m.picked.any (· == i) then some (.solid (Color.hex 0xBBDEFB)) else none)
-            (radius := 6) (padXY 10 6 (label s (size := 14)))),
-    card <| col (gap := 10) [
-      label "Notes" (size := 18) (color := Color.hex 0x0D47A1),
-      textArea "notes" m.notes .notes (width := 200) (lines := 9) (size := 15),
-      label s!"{wordCount m.notes.text} words, {m.notes.text.length} characters" (size := 13)
-        (color := Color.hex 0x546E7A)
-    ]
-  ]
+  <pad n=20>
+    <row gap=20 align=.start>
+      <card>
+        <col gap=14>
+          <label size=24 color={Color.hex 0x0D47A1}>Controls</label>
+          <row gap=10>
+            <label size=15>Volume</label>
+            <slider value={m.volume} onChange={.volume} width=180 label="Volume"/>
+            <label size=15>{(m.volume * 100).round.toUInt32}%</label>
+          </row>
+          <row gap=10>
+            <label size=15>Level</label>
+            <meter v={m.meter.value}/>
+          </row>
+          <checkbox checked={m.options[0]!} onToggle={.toggle 0} size=15>Dark grid lines</checkbox>
+          <checkbox checked={m.options[1]!} onToggle={.toggle 1} size=15>Show legend</checkbox>
+          <textField id="name" st={m.name} onChange={.name} width=260
+            placeholder="Type your name…" onSubmit={.submit}/>
+          <label size=15 color={Color.hex 0x546E7A}>
+            {if m.greeted.isEmpty then "Press Enter to greet" else s!"Hello, {m.greeted}!"}
+          </label>
+        </col>
+      </card>
+      <card padding=8>
+        <width w=200>
+          <scrollView offset={m.scroll} onScroll={.scrolled} height=280>
+            <col gap=2 align=.stretch>
+              {items.zipIdx.map fun (s, i) =>
+                <onTap msg={.pick i} radius=6>
+                  <decorated radius=6
+                      fill={if m.picked.any (· == i) then some (.solid (Color.hex 0xBBDEFB)) else none}>
+                    <padXY x=10 y=6><label size=14>{s}</label></padXY>
+                  </decorated>
+                </onTap>}
+            </col>
+          </scrollView>
+        </width>
+      </card>
+      <card>
+        <col gap=10>
+          <label size=18 color={Color.hex 0x0D47A1}>Notes</label>
+          <textArea id="notes" st={m.notes} onChange={.notes} width=200 lines=9 size=15/>
+          <label size=13 color={Color.hex 0x546E7A}>
+            {wordCount m.notes.text} words, {m.notes.text.length} characters
+          </label>
+        </col>
+      </card>
+    </row>
+  </pad>
 
 def app : App Model Msg where
   init := {}

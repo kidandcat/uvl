@@ -21,6 +21,7 @@ import UVL.Layout.Placed
 import UVL.Layout.Widget
 import UVL.UI.Basic
 import UVL.UI.DSL
+import UVL.UI.Html
 import UVL.UI.Charts
 import UVL.UI.Label
 import UVL.UI.Controls
