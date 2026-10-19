@@ -2,6 +2,7 @@ import UVL.Render.SDF
 import UVL.Render.Paint
 import UVL.Render.Path
 import UVL.Render.MSDF
+import UVL.Render.Sprite
 
 /-!
 # RenderOp: the immutable scene graph
@@ -37,6 +38,9 @@ inductive RenderOp where
   | text (pos : Vec2) (s : String) (scale : Float) (c : Color)
   /-- Glyphs drawn from an MSDF atlas (see `Render/MSDF.lean`). -/
   | glyphs (atlas : MSDF.Atlas) (quads : Array MSDF.GlyphQuad) (p : Paint)
+  /-- Textured quads cut from `tex` (see `Render/Sprite.lean`), sampled nearest
+  or, with `smooth`, bilinear. -/
+  | sprites (tex : Texture) (quads : Array Sprite) (smooth : Bool := false)
   | transform (m : Affine) (ops : Array RenderOp)
   | clip (r : Rect) (ops : Array RenderOp)
   | group (ops : Array RenderOp)

@@ -85,6 +85,7 @@ class GPURenderer {
         { binding: 1, visibility: stage, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: stage, buffer: { type: 'uniform' } },
         { binding: 3, visibility: stage, buffer: { type: 'read-only-storage' } },
+        { binding: 4, visibility: stage, buffer: { type: 'read-only-storage' } },
       ],
     });
     const layout = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
@@ -101,6 +102,8 @@ class GPURenderer {
     this.scene = null;
     // MSDF glyph atlas: persists across frames, glyph cells are written once
     this.atlas = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    // sprite texture (RGBA8 as u32s); not uploaded by the web shell yet
+    this.tex = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   }
 
   /** Apply the atlas updates queued by the wasm module (see web_shell.c). */
@@ -171,6 +174,7 @@ class GPURenderer {
           { binding: 1, resource: { buffer: this.data } },
           { binding: 2, resource: { buffer: this.screen } },
           { binding: 3, resource: { buffer: this.atlas } },
+          { binding: 4, resource: { buffer: this.tex } },
         ],
       });
     }

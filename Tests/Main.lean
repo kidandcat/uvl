@@ -49,6 +49,7 @@ def goldens : List Golden := [
   ⟨"typography", 460, 280, fun _ =>
     Image.toPNG (UI.render Examples.typography 460 280 (Color.hex 0xECEFF1))⟩,
   ⟨"msdf", 560, 260, fun _ => Image.toPNG (Raster.render 560 260 Examples.msdfText)⟩,
+  ⟨"sprites", 240, 160, fun _ => Image.toPNG (Raster.render 240 160 Examples.spriteScene)⟩,
   ⟨"controls", 960, 360, fun _ => Tests.Controls.session.framePNG⟩
 ]
 

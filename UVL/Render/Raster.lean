@@ -456,6 +456,30 @@ def drawGlyphs (fb : FrameBuffer w h) (ctx : Ctx w h) (atlas : MSDF.Atlas)
           | none => paint.colorAt (inv.apply ⟨pxc, py⟩)
         fb.blend x y col a
 
+/-- Sprites: for every pixel of a sprite's device box, the local point through
+the inverse transform gives the box coverage (as a filled rect) and the texel
+to sample. The GPU kernel performs the same operations. -/
+def drawSprites (fb : FrameBuffer w h) (ctx : Ctx w h) (tex : Texture) (quads : Array Sprite)
+    (smooth : Bool) : FrameBuffer w h :=
+  let inv := ctx.m.inverse
+  let scale := ctx.m.scaleFactor
+  quads.foldl (init := fb) fun fb s =>
+    if s.src.w <= 0 || s.src.h <= 0 || s.opacity <= 0 then fb else
+    let p := s.params
+    let cl := ctx.clipTo ((ctx.m.mapRect s.dst).inflate 1.0)
+    foldRange cl.y0 cl.y1 cl.hy fb fun fb y =>
+      let py := ctx.cy y.val
+      foldRange cl.x0 cl.x1 cl.hx fb fun fb x =>
+        let px := ctx.cx x.val
+        let qx := inv.a * px + inv.c * py + inv.e
+        let qy := inv.b * px + inv.d * py + inv.f
+        let cov := SDF.coverage (SDF.box ⟨qx, qy⟩ ⟨p.cx, p.cy⟩ ⟨p.hx, p.hy⟩ * scale)
+        if cov <= 0.0 then fb else
+        let u := (qx - p.dx) * p.ku + p.sx
+        let v := (qy - p.dy) * p.kv + p.sy
+        let c := if smooth then tex.sampleLinear p u v else tex.sampleNearest p u v
+        fb.blend x y { c with a := c.a * s.opacity } cov
+
 partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → FrameBuffer w h
   | .fill (.path p rule) paint => fillPolys fb ctx (p.flatten ctx.m) rule paint
   | .fill s paint =>
@@ -477,6 +501,7 @@ partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → Frame
       (blur * ctx.m.scaleFactor)
   | .text pos s scale c => drawText fb ctx pos s scale c
   | .glyphs atlas quads paint => drawGlyphs fb ctx atlas quads paint
+  | .sprites tex quads smooth => drawSprites fb ctx tex quads smooth
   | .transform m ops => ops.foldl (renderOp { ctx with m := ctx.m.compose m }) fb
   | .clip r ops => ops.foldl (renderOp { ctx with clip := ctx.clipTo (ctx.m.mapRect r) }) fb
   | .group ops => ops.foldl (renderOp ctx) fb

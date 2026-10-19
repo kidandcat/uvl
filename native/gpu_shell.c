@@ -29,8 +29,8 @@ static WGPUTextureFormat format = WGPUTextureFormat_RGBA8Unorm;
 static WGPUBindGroupLayout bgl;
 static WGPURenderPipeline pipelines[MAX_KINDS];
 static int nkinds;
-static WGPUBuffer prims_buf, data_buf, screen_buf, atlas_buf;
-static uint64_t prims_cap, data_cap, atlas_cap;
+static WGPUBuffer prims_buf, data_buf, screen_buf, atlas_buf, tex_buf;
+static uint64_t prims_cap, data_cap, atlas_cap, tex_cap;
 static WGPUBindGroup bind_group;
 static uint32_t surf_w, surf_h;
 static float *scratch;
@@ -77,13 +77,14 @@ static int create_pipelines(const char *wgsl, const char *entries) {
   if (!module) return 0;
 
   WGPUShaderStage vis = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
-  WGPUBindGroupLayoutEntry e[4] = {
+  WGPUBindGroupLayoutEntry e[5] = {
     {.binding = 0, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_ReadOnlyStorage}},
     {.binding = 1, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_ReadOnlyStorage}},
     {.binding = 2, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_Uniform}},
     {.binding = 3, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_ReadOnlyStorage}},
+    {.binding = 4, .visibility = vis, .buffer = {.type = WGPUBufferBindingType_ReadOnlyStorage}},
   };
-  WGPUBindGroupLayoutDescriptor bgld = {.entryCount = 4, .entries = e};
+  WGPUBindGroupLayoutDescriptor bgld = {.entryCount = 5, .entries = e};
   bgl = wgpuDeviceCreateBindGroupLayout(device, &bgld);
   WGPUPipelineLayoutDescriptor pld = {.bindGroupLayoutCount = 1, .bindGroupLayouts = &bgl};
   WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(device, &pld);
@@ -141,6 +142,8 @@ static int init_device(void) {
   WGPUBufferDescriptor ad = {.size = 16, .usage = WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst};
   atlas_buf = wgpuDeviceCreateBuffer(device, &ad);
   atlas_cap = 16;
+  tex_buf = wgpuDeviceCreateBuffer(device, &ad);
+  tex_cap = 16;
   return 1;
 }
 
@@ -236,13 +239,14 @@ static void draw(WGPUTexture target, b_lean_obj_arg prims, b_lean_obj_arg ranges
                  b_lean_obj_arg bg, WGPUBuffer readback, uint32_t stride) {
   full |= ensure(&prims_buf, &prims_cap, sizeof(float) * lean_sarray_size(prims));
   if (!bind_group) {
-    WGPUBindGroupEntry e[4] = {
+    WGPUBindGroupEntry e[5] = {
       {.binding = 0, .buffer = prims_buf, .size = prims_cap},
       {.binding = 1, .buffer = data_buf, .size = data_cap},
       {.binding = 2, .buffer = screen_buf, .size = 16},
       {.binding = 3, .buffer = atlas_buf, .size = atlas_cap},
+      {.binding = 4, .buffer = tex_buf, .size = tex_cap},
     };
-    WGPUBindGroupDescriptor bgd = {.layout = bgl, .entryCount = 4, .entries = e};
+    WGPUBindGroupDescriptor bgd = {.layout = bgl, .entryCount = 5, .entries = e};
     bind_group = wgpuDeviceCreateBindGroup(device, &bgd);
   }
   upload(prims_buf, prims, ranges, full);
@@ -400,6 +404,23 @@ LEAN_EXPORT lean_obj_res uvl_gpu_atlas_write(uint32_t offset, b_lean_obj_arg tex
     wgpuQueueWriteBuffer(queue, atlas_buf, (uint64_t)offset * 4, tmp, sizeof(float) * n);
     free(tmp);
   }
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
+/* Lean: `GPU.textureUpload pixels : IO Unit`. Replace the sprite texture
+ * buffer by the texture's RGBA bytes (read by the shader as packed u32s). */
+LEAN_EXPORT lean_obj_res uvl_gpu_texture_upload(b_lean_obj_arg pixels, lean_obj_arg world) {
+  (void)world;
+  if (!device) return io_error("uvl: GPU not initialized");
+  size_t n = lean_sarray_size(pixels);
+  uint64_t bytes = n < 16 ? 16 : ((uint64_t)n + 15) / 16 * 16;
+  if (tex_buf) wgpuBufferRelease(tex_buf);
+  WGPUBufferDescriptor bd = {.size = bytes, .usage = WGPUBufferUsage_Storage | WGPUBufferUsage_CopyDst};
+  tex_buf = wgpuDeviceCreateBuffer(device, &bd);
+  tex_cap = bytes;
+  if (n / 4 * 4 > 0) wgpuQueueWriteBuffer(queue, tex_buf, 0, lean_sarray_cptr(pixels), n / 4 * 4);
+  if (bind_group) wgpuBindGroupRelease(bind_group);
+  bind_group = NULL;
   return lean_io_result_mk_ok(lean_box(0));
 }
 

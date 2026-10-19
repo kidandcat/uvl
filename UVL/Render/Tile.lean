@@ -56,6 +56,10 @@ partial def bounds (m : Affine) : RenderOp → Option Rect
     quads.foldl (init := none) fun acc q =>
       let r := (m.mapRect (atlas.quadRect q)).inflate 2.0
       some (match acc with | some a => Rect.union a r | none => r)
+  | .sprites _ quads _ =>
+    quads.foldl (init := none) fun acc s =>
+      let r := (m.mapRect s.dst).inflate 2.0
+      some (match acc with | some a => Rect.union a r | none => r)
   | .transform m' ops => boundsAll (m.compose m') ops
   | .clip r ops => (boundsAll m ops).map fun b =>
     -- intersection is contained in both; keep the smaller one cheaply

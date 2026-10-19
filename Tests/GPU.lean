@@ -66,6 +66,7 @@ def counterScene : Scene :=
 def scenes : List Scene := [
   ⟨"primitives", 480, 320, Examples.primitives, Color.white⟩,
   ⟨"hello", 320, 160, Examples.hello.toOps 320 160, Color.hex 0xECEFF1⟩,
+  ⟨"sprites", 240, 160, Examples.spriteScene, Color.white⟩,
   counterScene
 ]
 

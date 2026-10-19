@@ -35,6 +35,10 @@ opaque atlasReset (floats : UInt32) : IO Unit
 @[extern "uvl_gpu_atlas_write"]
 opaque atlasWrite (offset : UInt32) (texels : @& FloatArray) : IO Unit
 
+/-- Replace the sprite texture buffer by these RGBA8 texels. -/
+@[extern "uvl_gpu_texture_upload"]
+opaque textureUpload (pixels : @& ByteArray) : IO Unit
+
 /-- Name of the GPU in use. -/
 @[extern "uvl_gpu_adapter_name"]
 opaque adapterName : IO String
@@ -62,6 +66,16 @@ def syncAtlas (b : GPU.Batch) : IO Unit := do
       up := up.set! g true
   atlasState.set (a.id + 1, up)
 
+/-- The sprite texture on the GPU: its id plus one, 0 for none. -/
+initialize textureState : IO.Ref Nat ← IO.mkRef 0
+
+/-- Upload the batch's sprite texture unless it is already on the GPU. -/
+def syncTexture (b : GPU.Batch) : IO Unit := do
+  let some t := b.texture | return
+  if (← textureState.get) != t.id + 1 then
+    textureUpload t.pixels
+    textureState.set (t.id + 1)
+
 /-- The arrays of the previous frame, now on the GPU: only what changed since
 is written (`Batch.changedRanges`). -/
 initialize lastFrame : IO.Ref (Option (FloatArray × FloatArray)) ← IO.mkRef none
@@ -71,6 +85,7 @@ def draw (w h : Nat) (ops : Array RenderOp) (bg : Color) (readback : Bool := fal
     IO ByteArray := do
   let b := GPU.Batch.build w h ops
   syncAtlas b
+  syncTexture b
   let (pr, dr, full) := match ← lastFrame.get with
     | some (p, d) => (GPU.Batch.changedRanges p b.prims, GPU.Batch.changedRanges d b.data, false)
     | none => (.empty, .empty, true)

@@ -85,7 +85,8 @@ inductive Fn1 where
   | neg | abs | sqrt | floor | ceil | exp
 deriving BEq, Repr
 
-/-- A read-only storage buffer of `f32`s, declared by the shader skeleton. -/
+/-- A read-only storage buffer of `f32`s (read with `load`) or `u32`s (`loadU`),
+declared by the shader skeleton. -/
 structure Buffer where
   name : String
 deriving BEq, Repr
@@ -123,6 +124,7 @@ inductive Expr : Ty → Type where
   | shr (a b : Expr .u32) : Expr .u32
   | band (a b : Expr .u32) : Expr .u32
   | load (buf : Buffer) (i : Expr .u32) : Expr .f32
+  | loadU (buf : Buffer) (i : Expr .u32) : Expr .u32
   | call {ps : List Ty} {r : Ty} (f : FnRef ps r) (args : Args ps) : Expr r
 
 /-- Typed argument lists. -/
@@ -336,6 +338,7 @@ partial def Expr.toWGSL {t : Ty} : Expr t → String
   | .shr a b => s!"({a.toWGSL} >> {b.toWGSL})"
   | .band a b => s!"({a.toWGSL} & {b.toWGSL})"
   | .load buf i => s!"{buf.name}[{i.toWGSL}]"
+  | .loadU buf i => s!"{buf.name}[{i.toWGSL}]"
   | .call f as => s!"{f.name}({", ".intercalate as.toWGSL})"
 
 partial def Args.toWGSL {ts : List Ty} : Args ts → List String
@@ -465,6 +468,11 @@ partial def Expr.eval (env : Env) : {t : Ty} → Expr t → t.denote
     let arr := env.buffers buf.name
     let i := (i.eval env).toNat
     if h : i < arr.size then arr[i] else 0
+  | _, .loadU buf i =>
+    -- `u32` buffers are modelled as floats holding the integers
+    let arr := env.buffers buf.name
+    let i := (i.eval env).toNat
+    if h : i < arr.size then arr[i].toUInt32 else 0
   | r, .call f as =>
     match env.fns f.name with
     | none => default
