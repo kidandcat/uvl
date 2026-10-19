@@ -16,6 +16,8 @@ import UVL.Text.TrueType
 import UVL.Text.Layout
 import UVL.Output.Deflate
 import UVL.Output.Image
+import UVL.Output.Inflate
+import UVL.Output.PngDecode
 import UVL.Layout.Constraints
 import UVL.Layout.Placed
 import UVL.Layout.Widget

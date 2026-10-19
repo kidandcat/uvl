@@ -76,7 +76,7 @@ def checkGolden (update : Bool) (g : Golden) : IO Bool := do
   if expected == actual then
     IO.println s!"  [ok] {g.name} (byte-identical)"
     return true
-  match Tests.Png.decode expected, Tests.Png.decode actual with
+  match Image.decodePNG expected, Image.decodePNG actual with
   | .ok (ew, eh, ed), .ok (aw, ah, ad) =>
     if ew != aw || eh != ah then
       IO.println s!"  [FAIL] {g.name}: size {aw}x{ah}, expected {ew}x{eh}"
@@ -136,7 +136,7 @@ def appTests : IO Bool := do
 
 def codecTests : IO Bool := do
   let fb := Raster.render 37 23 Examples.primitives (Color.hex 0x123456)
-  let ok := match Tests.Png.decode (Image.toPNG fb) with
+  let ok := match Image.decodePNG (Image.toPNG fb) with
     | .ok (w, h, d) => w == 37 && h == 23 && d == fb.data
     | .error _ => false
   check "PNG round-trip (odd size, all filters)" ok
@@ -153,6 +153,7 @@ def main (args : List String) : IO UInt32 := do
   ok := (← appTests) && ok
   IO.println "codecs:"
   ok := (← codecTests) && ok
+  ok := (← Tests.PngDecode.run) && ok
   IO.println "tiles / bare-metal:"
   ok := (← Tests.Tile.run) && ok
   IO.println "partial redraw:"
