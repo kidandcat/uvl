@@ -31,5 +31,6 @@ import UVL.UI.Tween
 import UVL.App.Event
 import UVL.App.Runtime
 import UVL.App.Host
+import UVL.Game.Camera
 import UVL.GPU.Reference
 import UVL.BareMetal.Shell

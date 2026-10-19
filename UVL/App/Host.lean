@@ -24,6 +24,10 @@ form that crosses a C ABI easily:
   | 10   | pointer leave|                       |
   | 11   | composition  | Unicode codepoint (one per event) |
   | 12   | composition end of update (emits the composed string, `""` to clear) | |
+  | 13   | touch down   | finger id, x, y       |
+  | 14   | touch move   | finger id, x, y       |
+  | 15   | touch up     | finger id, x, y       |
+  | 16   | pinch        | scale, x, y           |
 
   Keycodes follow SDL: printable keys are their codepoint, arrows are
   `0x4000004F` (right) to `0x40000052` (up), Shift is `0x400000E1` and Ctrl
@@ -89,6 +93,10 @@ def decodeEvents (raw : FloatArray) : Array Event := Id.run do
       | 9 => some .quit
       | 10 => some .pointerLeave
       | 12 => some (.compose composing)
+      | 13 => some (.touchDown a.toUInt64.toNat b c)
+      | 14 => some (.touchMove a.toUInt64.toNat b c)
+      | 15 => some (.touchUp a.toUInt64.toNat b c)
+      | 16 => some (.pinch a b c)
       | _ => none
     if k == 11 then composing := composing.push (Char.ofNat a.toUInt64.toNat)
     if k == 12 then composing := ""

@@ -146,6 +146,26 @@ LEAN_EXPORT lean_obj_res uvl_sdl_poll(lean_obj_arg world) {
       arr = push(arr, 12, 0, 0, 0);
       break;
     }
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_FINGER_MOTION:
+    case SDL_EVENT_FINGER_UP:
+    case SDL_EVENT_FINGER_CANCELED: {
+      /* touch screens only (trackpads move the mouse and pinch); SDL also
+         drives the mouse with the first finger */
+      if (SDL_GetTouchDeviceType(e.tfinger.touchID) != SDL_TOUCH_DEVICE_DIRECT) break;
+      int ww = 0, wh = 0;
+      SDL_GetWindowSize(win, &ww, &wh);
+      int kind = e.type == SDL_EVENT_FINGER_DOWN ? 13 : e.type == SDL_EVENT_FINGER_MOTION ? 14 : 15;
+      arr = push(arr, kind, (double)(e.tfinger.fingerID & 0xFFFFFF), e.tfinger.x * ww,
+                 e.tfinger.y * wh);
+      break;
+    }
+    case SDL_EVENT_PINCH_UPDATE: {
+      float mx = 0, my = 0;
+      SDL_GetMouseState(&mx, &my);
+      arr = push(arr, 16, e.pinch.scale, mx, my);
+      break;
+    }
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       arr = push(arr, 8, e.window.data1, e.window.data2, 0); break;
     case SDL_EVENT_WINDOW_MOUSE_LEAVE:

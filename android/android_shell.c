@@ -57,7 +57,8 @@ extern void lean_initialize_runtime_module(void);
 extern void lean_io_mark_end_initialization(void);
 
 enum { EV_MOVE = 1, EV_DOWN = 2, EV_UP = 3, EV_KEY_DOWN = 5, EV_KEY_UP = 6, EV_TEXT = 7,
-       EV_RESIZE = 8, EV_LEAVE = 10 };
+       EV_RESIZE = 8, EV_LEAVE = 10, EV_TOUCH_DOWN = 13, EV_TOUCH_MOVE = 14,
+       EV_TOUCH_UP = 15 };
 
 /* SDL keycodes, as UVL/App/Host.lean decodes them. */
 #define K_RIGHT 0x4000004F
@@ -267,7 +268,25 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
   (void)app;
   if (!g.rt) return 0;
   if (AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_MOTION) {
-    int32_t action = AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK;
+    int32_t raw = AMotionEvent_getAction(ev);
+    int32_t action = raw & AMOTION_EVENT_ACTION_MASK;
+    size_t idx = (size_t)((raw & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
+                          AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
+    /* every finger, for multitouch gestures (Event.touchDown/Move/Up) */
+    size_t n = AMotionEvent_getPointerCount(ev);
+    for (size_t i = 0; i < n; i++) {
+      int kind;
+      if (action == AMOTION_EVENT_ACTION_MOVE) kind = EV_TOUCH_MOVE;
+      else if (action == AMOTION_EVENT_ACTION_CANCEL) kind = EV_TOUCH_UP;
+      else if (i != idx) continue;
+      else if (action == AMOTION_EVENT_ACTION_DOWN || action == AMOTION_EVENT_ACTION_POINTER_DOWN)
+        kind = EV_TOUCH_DOWN;
+      else if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_POINTER_UP)
+        kind = EV_TOUCH_UP;
+      else continue;
+      push(kind, AMotionEvent_getPointerId(ev, i), AMotionEvent_getX(ev, i) * g.sx - g.ox,
+           AMotionEvent_getY(ev, i) * g.sy - g.oy);
+    }
     /* only the first finger drives the pointer */
     double x = AMotionEvent_getX(ev, 0) * g.sx - g.ox, y = AMotionEvent_getY(ev, 0) * g.sy - g.oy;
     switch (action) {

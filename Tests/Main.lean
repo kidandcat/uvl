@@ -7,6 +7,7 @@ import Tests.GPU
 import Tests.Text
 import Tests.Controls
 import Tests.Html
+import Tests.Camera
 
 /-!
 Test driver (`lake test`).
@@ -163,6 +164,8 @@ def main (args : List String) : IO UInt32 := do
   ok := (← Tests.Controls.run) && ok
   IO.println "TrueType text:"
   ok := (← Tests.Text.run) && ok
+  IO.println "camera and gestures:"
+  ok := (← Tests.Camera.run) && ok
   IO.println "GPU pipeline (interpreted):"
   ok := (← Tests.GPU.run) && ok
   IO.println (if ok then "ALL TESTS PASSED" else "SOME TESTS FAILED")
