@@ -69,12 +69,21 @@ structure Prim where
 
 namespace Batch
 
+/-! The arrays are taken out of the batch before appending (`takePrims`,
+`takeData`): `{ b with prims := b.prims.push x }` would push onto an array
+still shared with `b`, copying it on every primitive. -/
+
+@[inline] def takePrims (b : Batch) : FloatArray × Batch := (b.prims, { b with prims := .empty })
+@[inline] def takeData (b : Batch) : FloatArray × Batch := (b.data, { b with data := .empty })
+
 /-- Append the paint's stops to `data`; returns slots 24..35. -/
 def paintSlots (b : Batch) (p : Paint) : Batch × Array Float :=
   let stops (b : Batch) (ss : Array Stop) : Batch × Float :=
     let off := b.data.size.toF
-    (ss.foldl (init := b) fun b (o, c) =>
-      { b with data := b.data.push o |>.push c.r |>.push c.g |>.push c.b |>.push c.a }, off)
+    let (d, b) := b.takeData
+    let d := ss.foldl (init := d) fun d (o, c) =>
+      d.push o |>.push c.r |>.push c.g |>.push c.b |>.push c.a
+    ({ b with data := d }, off)
   match p with
   | .solid c => (b, #[0, 0, 0, 0, c.r, c.g, c.b, c.a, 0, 0, 0, 0])
   | .linear p0 p1 ss =>
@@ -95,7 +104,8 @@ def pushSlots {w h : Nat} (b : Batch) (clip : Clip w h) (pr : Prim) (ps : Array 
       m.a, m.b, m.c, m.d, m.e, m.f, pr.scale, pr.blur,
       pr.a.x, pr.a.y, pr.a.z, pr.a.w,
       pr.radii.tl, pr.radii.tr, pr.radii.br, pr.radii.bl] ++ ps
-  { b with prims := rec_.foldl FloatArray.push b.prims, count := b.count + 1 }
+  let (p, b) := b.takePrims
+  { b with prims := rec_.foldl FloatArray.push p, count := b.count + 1 }
 
 /-- Append a primitive covering the pixels of `clip` (nothing if empty). -/
 def push {w h : Nat} (b : Batch) (clip : Clip w h) (pr : Prim) (paint : Paint) : Batch :=
@@ -115,8 +125,10 @@ def shapeParams : Shape → Option (Nat × V4 × SDF.Corners × Rect)
 /-- Append `n` records of 5 floats to `data`; returns their offset. -/
 def pushData (b : Batch) (recs : Array (Float × Float × Float × Float × Float)) : Batch × Float :=
   let off := b.data.size.toF
-  ({ b with data := recs.foldl (init := b.data) fun d (p, q, r, s, t) =>
-      d.push p |>.push q |>.push r |>.push s |>.push t }, off)
+  let (d, b) := b.takeData
+  let d := recs.foldl (init := d) fun d (p, q, r, s, t) =>
+    d.push p |>.push q |>.push r |>.push s |>.push t
+  ({ b with data := d }, off)
 
 /-- Rows per band of a path primitive. Each band only carries the edges that
 can affect its pixels, so the per-pixel loops of the path kernels stay short

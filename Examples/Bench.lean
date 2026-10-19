@@ -1,5 +1,6 @@
 import Examples.Counter
 import Examples.Scenes
+import Examples.Sprites
 open UVL
 
 /-- Keep `x` opaque to the compiler, so a frame of a constant scene is not
@@ -63,6 +64,29 @@ def main (args : List String) : IO Unit := do
     cnt := cnt + (GPU.Batch.build w h ops).count
   let t1 ← IO.monoNanosNow
   IO.println s!"dashboard, layout + GPU lowering: {(t1 - t0).toF / n.toF / 1e6} ms/frame"
+  -- the sprites example at 1280 x 720: 300 walking units over the visible tiles
+  let rtm ← opaqueId (Runtime.start (Examples.Sprites.app 1280 720) 1280 720)
+  let t0 ← IO.monoNanosNow
+  for _ in [0:n] do
+    let rtm ← opaqueId rtm
+    cnt := cnt + (rtm.handle (.tick 0.016)).model.units.size
+  let t1 ← IO.monoNanosNow
+  let ops := rtm.ops
+  let t2 ← IO.monoNanosNow
+  for _ in [0:n] do
+    let rtm ← opaqueId rtm
+    cnt := cnt + rtm.ops.size
+  let t3 ← IO.monoNanosNow
+  for _ in [0:n] do
+    let ops ← opaqueId ops
+    cnt := cnt + (GPU.Batch.build 1280 720 ops).count
+  let t4 ← IO.monoNanosNow
+  for i in [0:n / 4 + 1] do
+    let ops ← opaqueId ops
+    s := s + (Raster.render 1280 720 ops).data[i]!.toNat
+  let t5 ← IO.monoNanosNow
+  let per (a b : Nat) (k : Nat := n) : Float := (b - a).toFloat / k.toFloat / 1e6
+  IO.println s!"sprites map 1280x720 ({(GPU.Batch.build 1280 720 ops).count} primitives): update {per t0 t1} ms, view {per t2 t3} ms, GPU lowering {per t3 t4} ms, CPU raster {per t4 t5 (n / 4 + 1)} ms"
   -- TrueType text: MSDF cell generation (once per glyph), then frames of text
   let font ← opaqueId (Text.uvlSans ())
   let paths := font.glyphs.map (·.path)
