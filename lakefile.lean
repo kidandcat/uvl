@@ -15,7 +15,7 @@ lean_lib Examples where
   globs := #[.one `Examples.Scenes, .one `Examples.Counter, .one `Examples.BareMetalCounter,
     .one `Examples.Clock, .one `Examples.BareMetalClock,
     .one `Examples.CounterWeb, .one `Examples.DashboardWeb, .one `Examples.TextWeb, .one `Examples.Controls, .one `Examples.ControlsWeb,
-    .one `Examples.Phone, .one `Examples.PhoneAndroid]
+    .one `Examples.Phone, .one `Examples.PhoneAndroid, .one `Examples.Sprites]
 
 lean_exe «uvl-demo» where
   root := `Examples.Demo
@@ -118,6 +118,12 @@ lean_exe «uvl-counter» where
 
 lean_exe «uvl-controls» where
   root := `Examples.ControlsWindow
+  moreLinkObjs := #[sdl_shell.o, gpu_shell.o, sdl3_lib, wgpu_lib]
+  moreLinkArgs := nativeLinkArgs
+
+/-- A tile map with 300 walking units, camera gestures and an fps counter. -/
+lean_exe «uvl-sprites» where
+  root := `Examples.SpritesWindow
   moreLinkObjs := #[sdl_shell.o, gpu_shell.o, sdl3_lib, wgpu_lib]
   moreLinkArgs := nativeLinkArgs
 
