@@ -1,6 +1,9 @@
 import Examples.Sprites
+import UVLGPU
 
-/-! Android build of the sprites example: `android/build.sh Examples.SpritesAndroid`. -/
+/-! Android build of the sprites example: `android/build.sh Examples.SpritesAndroid`.
+Importing `UVLGPU` makes the build link the WebGPU renderer (drawn on Vulkan,
+with the CPU rasterizer as the fallback). -/
 
 namespace Examples.SpritesAndroid
 

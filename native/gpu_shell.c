@@ -7,8 +7,9 @@
  * primitive kind. No rendering logic lives here.
  *
  * It renders either to a window surface (created by the SDL shell from the
- * window's native handles, see uvl_sdl_gpu_init in sdl_shell.c) or, headless,
- * to an offscreen texture that can be read back (tests).
+ * window's native handles, see uvl_sdl_gpu_init in sdl_shell.c, or by the
+ * Android shell from its ANativeWindow) or, headless, to an offscreen texture
+ * that can be read back (tests).
  */
 #include <lean/lean.h>
 #include <webgpu/webgpu.h>
@@ -213,6 +214,23 @@ static int ensure(WGPUBuffer *buf, uint64_t *cap, uint64_t bytes) {
  * whether the next draw must write them in full (a frame was dropped). */
 static uint64_t uploaded;
 static int force_full;
+
+/* Replace the window surface (Android destroys and recreates its window when
+ * the app goes to the background), or drop it with NULL. The device and the
+ * pipelines stay; the next frame is uploaded in full. */
+int uvl_wgpu_set_surface(const WGPUChainedStruct *surface_desc) {
+  if (surface) {
+    if (surf_w) wgpuSurfaceUnconfigure(surface);
+    wgpuSurfaceRelease(surface);
+    surface = NULL;
+  }
+  surf_w = surf_h = 0;
+  force_full = 1;
+  if (!surface_desc) return 1;
+  WGPUSurfaceDescriptor sd = {.nextInChain = surface_desc};
+  surface = wgpuInstanceCreateSurface(instance, &sd);
+  return surface != NULL;
+}
 
 /* Write `arr` (as f32) to `buf`: only the float ranges `ranges` (flattened
  * start/stop pairs, see `Batch.changedRanges`) unless `full`. */

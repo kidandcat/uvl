@@ -97,4 +97,28 @@ def draw (w h : Nat) (ops : Array RenderOp) (bg : Color) (readback : Bool := fal
     IO ByteArray :=
   drawBatch (GPU.Batch.build w h ops) w h bg readback
 
+/-! ## Shells that own the loop (Android)
+
+The Android shell runs its loop in C: it creates the surface from its window
+with the shader below (`uvl_wgpu_init` in `native/gpu_shell.c`) and presents
+frames with `uvl_host_gpu_present` and `uvl_host_mark_clean` instead of
+`uvl_host_present` (the CPU rasterizer). -/
+
+/-- The WGSL program. -/
+@[export uvl_host_gpu_shader]
+def hostShader (_ : Unit) : String := GPU.shaderSource
+
+/-- The fragment entry points, comma separated. -/
+@[export uvl_host_gpu_entries]
+def hostEntries (_ : Unit) : String := entries
+
+/-- Draw the current frame on a `w × h` window surface, with the app's top-left
+corner at `(x, y)` (below the status bar); the rest is the background.
+(`AnyRuntime` is too large a type for an `IO` result: the shell clears `dirty`
+with `uvl_host_mark_clean`.) -/
+@[export uvl_host_gpu_present]
+def hostPresent (r : AnyRuntime) (x y w h : UInt32) : IO Unit := do
+  let ops := #[RenderOp.transform (Affine.translate x.toFloat y.toFloat) r.rt.ops]
+  discard <| drawBatch (GPU.Batch.build w.toNat h.toNat ops) w.toNat h.toNat r.rt.app.background
+
 end UVL.Native.GPU

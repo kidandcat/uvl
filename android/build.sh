@@ -19,6 +19,10 @@
 # then compiles the app's Lake-generated C and android/android_shell.c into
 # lib/<abi>/libuvl.so and packages, aligns and signs the APK.
 #
+# Apps that import UVLGPU also get the WebGPU renderer: native/gpu_shell.c and
+# a prebuilt wgpu-native for Android (fetched into the cache), which draw on
+# the window's Vulkan surface (see android/android_shell.c).
+#
 # Environment:
 #   ANDROID_ABIS     ABIs to build (default "arm64-v8a"; also x86_64, armeabi-v7a, x86)
 #   UVL_APK          output path (default android/dist/uvl-example.apk)
@@ -122,6 +126,8 @@ while todo:
 for m in sorted(seen):
     print('.lake/build/ir/' + m.replace('.', '/') + '.c')
 PY
+GPU=0
+grep -q '^.lake/build/ir/UVLGPU.c$' "$APP_LIST" && GPU=1
 
 STAGE=$CACHE/apk
 rm -rf "$STAGE" && mkdir -p "$STAGE/lib"
@@ -183,7 +189,25 @@ for ABI in $ABIS; do
   xargs -P "$JOBS" -n 1 sh -c 'f=$1; o='"$APP"'/$(echo "$f" | sed "s|.lake/build/ir/||; s|/|_|g").o;
     '"$CC"' '"$CFLAGS"' -I'"$INC"' -c "$f" -o "$o"' sh < "$APP_LIST"
   GLUE=$NDK/sources/android/native_app_glue
-  $CC $CFLAGS -I"$INC" -I"$GLUE" -DUVL_ANDROID_INIT="$INIT_SYM" -c android/android_shell.c -o "$APP/android_shell.o"
+  SHELL_FLAGS=()
+  GPU_LIBS=()
+  if [ "$GPU" = 1 ]; then
+    case "$ABI" in
+      arm64-v8a) WARCH=aarch64 ;;
+      armeabi-v7a) WARCH=armv7 ;;
+      x86) WARCH=i686 ;;
+      *) WARCH=$ABI ;;
+    esac
+    WGPU=$OUT/wgpu-native
+    WGPU_NATIVE_ASSET=wgpu-android-$WARCH-release.zip native/fetch_wgpu.sh "$WGPU"
+    $CC $CFLAGS -I"$INC" -I"$WGPU/include" -c native/gpu_shell.c -o "$APP/gpu_shell.o"
+    SHELL_FLAGS=(-DUVL_ANDROID_GPU -I"$WGPU/include")
+    GPU_LIBS=(-L"$WGPU/lib" -lwgpu_native)
+    mkdir -p "$STAGE/lib/$ABI"
+    cp "$WGPU/lib/libwgpu_native.so" "$STAGE/lib/$ABI/"
+    log "[$ABI] with the WebGPU renderer (wgpu-native)"
+  fi
+  $CC $CFLAGS -I"$INC" -I"$GLUE" ${SHELL_FLAGS[@]+"${SHELL_FLAGS[@]}"} -DUVL_ANDROID_INIT="$INIT_SYM" -c android/android_shell.c -o "$APP/android_shell.o"
   $CC $CFLAGS -I"$GLUE" -c "$GLUE/android_native_app_glue.c" -o "$APP/android_native_app_glue.o"
   $CC $CFLAGS -I"$INC" -c android/lean_stubs.c -o "$APP/lean_stubs.o"
 
@@ -194,7 +218,7 @@ for ABI in $ABIS; do
   SO=$STAGE/lib/$ABI/libuvl.so
   mkdir -p "$(dirname "$SO")"
   LINK=($CXX -shared -o "$SO" "$APP"/*.o "$OUT/libExtra-$EXTRA_KEY.a" "$OUT/libInit.a" "$OUT/libleanrt.a"
-        "$OUT/libuv.a" -landroid -llog -lm -static-libstdc++ -u ANativeActivity_onCreate
+        "$OUT/libuv.a" ${GPU_LIBS[@]+"${GPU_LIBS[@]}"} -landroid -llog -lm -static-libstdc++ -u ANativeActivity_onCreate
         -Wl,--no-undefined -Wl,--gc-sections -Wl,-z,max-page-size=16384 -Wl,--error-limit=0)
   if ! "${LINK[@]}" 2> "$APP/link1.log"; then
     grep -o 'undefined symbol: [A-Za-z0-9_]*' "$APP/link1.log" | cut -d' ' -f3 | sort -u > "$APP/undef" || true
