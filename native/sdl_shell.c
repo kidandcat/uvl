@@ -210,7 +210,8 @@ LEAN_EXPORT lean_obj_res uvl_sdl_present(b_lean_obj_arg rgba, uint32_t w, uint32
   if (!ren) {
     ren = SDL_CreateRenderer(win, NULL);
     if (!ren) return io_sdl_error("SDL_CreateRenderer");
-    SDL_SetRenderVSync(ren, 1);
+    const char *vsync = getenv("UVL_VSYNC"); /* UVL_VSYNC=0: no vsync (measuring) */
+    SDL_SetRenderVSync(ren, vsync && !strcmp(vsync, "0") ? 0 : 1);
   }
   if (lean_sarray_size(rgba) < (size_t)w * h * 4) return io_sdl_error("frame too small");
   if (!tex || tex_w != (int)w || tex_h != (int)h) {

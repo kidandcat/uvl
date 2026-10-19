@@ -26,6 +26,7 @@ static WGPUDevice device;
 static WGPUQueue queue;
 static WGPUSurface surface;
 static WGPUTextureFormat format = WGPUTextureFormat_RGBA8Unorm;
+static WGPUPresentMode present_mode = WGPUPresentMode_Fifo;
 static WGPUBindGroupLayout bgl;
 static WGPURenderPipeline pipelines[MAX_KINDS];
 static int nkinds;
@@ -168,6 +169,14 @@ int uvl_wgpu_init(const WGPUChainedStruct *surface_desc, const char *wgsl, const
         format = caps.formats[i];
         break;
       }
+    /* UVL_PRESENT=immediate or mailbox: do not wait for vsync (measuring) */
+    const char *want = getenv("UVL_PRESENT");
+    WGPUPresentMode mode = !want ? WGPUPresentMode_Fifo
+      : !strcmp(want, "immediate") ? WGPUPresentMode_Immediate
+      : !strcmp(want, "mailbox") ? WGPUPresentMode_Mailbox : WGPUPresentMode_Fifo;
+    for (size_t i = 0; i < caps.presentModeCount; i++)
+      if (caps.presentModes[i] == mode) present_mode = mode;
+    if (want && present_mode != mode) fprintf(stderr, "uvl: present mode %s unsupported\n", want);
     wgpuSurfaceCapabilitiesFreeMembers(caps);
   }
   return create_pipelines(wgsl, entries);
@@ -178,7 +187,7 @@ static void configure(uint32_t w, uint32_t h) {
   WGPUSurfaceConfiguration c = {
     .device = device, .format = format, .usage = WGPUTextureUsage_RenderAttachment,
     .width = w, .height = h, .alphaMode = WGPUCompositeAlphaMode_Auto,
-    .presentMode = WGPUPresentMode_Fifo,
+    .presentMode = present_mode,
   };
   wgpuSurfaceConfigure(surface, &c);
   surf_w = w;

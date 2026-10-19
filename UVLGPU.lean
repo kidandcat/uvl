@@ -80,10 +80,9 @@ def syncTexture (b : GPU.Batch) : IO Unit := do
 is written (`Batch.changedRanges`). -/
 initialize lastFrame : IO.Ref (Option (FloatArray × FloatArray)) ← IO.mkRef none
 
-/-- Lower a `w × h` scene and draw it on the GPU. -/
-def draw (w h : Nat) (ops : Array RenderOp) (bg : Color) (readback : Bool := false) :
+/-- Draw a lowered `w × h` scene on the GPU. -/
+def drawBatch (b : GPU.Batch) (w h : Nat) (bg : Color) (readback : Bool := false) :
     IO ByteArray := do
-  let b := GPU.Batch.build w h ops
   syncAtlas b
   syncTexture b
   let (pr, dr, full) := match ← lastFrame.get with
@@ -92,5 +91,10 @@ def draw (w h : Nat) (ops : Array RenderOp) (bg : Color) (readback : Bool := fal
   lastFrame.set (some (b.prims, b.data))
   drawRaw b.prims b.data pr dr full b.count.toUInt32 w.toUInt32 h.toUInt32
     (FloatArray.empty.push bg.r |>.push bg.g |>.push bg.b |>.push bg.a) readback
+
+/-- Lower a `w × h` scene and draw it on the GPU. -/
+def draw (w h : Nat) (ops : Array RenderOp) (bg : Color) (readback : Bool := false) :
+    IO ByteArray :=
+  drawBatch (GPU.Batch.build w h ops) w h bg readback
 
 end UVL.Native.GPU
