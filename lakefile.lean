@@ -15,7 +15,7 @@ lean_lib Examples where
   globs := #[.one `Examples.Scenes, .one `Examples.Counter, .one `Examples.BareMetalCounter,
     .one `Examples.Clock, .one `Examples.BareMetalClock,
     .one `Examples.CounterWeb, .one `Examples.DashboardWeb, .one `Examples.TextWeb, .one `Examples.Controls, .one `Examples.ControlsWeb,
-    .one `Examples.Phone, .one `Examples.PhoneAndroid, .one `Examples.Sprites]
+    .one `Examples.Phone, .one `Examples.PhoneAndroid, .one `Examples.Sprites, .one `Examples.SpritesAndroid]
 
 lean_exe «uvl-demo» where
   root := `Examples.Demo

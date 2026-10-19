@@ -15,6 +15,10 @@
  * The on-screen keyboard is shown while a text input has the focus
  * (`uvl_host_text_focus`); typed characters are decoded with the framework's
  * `KeyEvent.getUnicodeChar` through JNI.
+ *
+ * For measuring, `adb shell setprop debug.uvl.stats 1` (read at launch) makes
+ * the loop log the frame rate and the time per frame spent stepping the
+ * runtime (update, view, layout) and rasterizing + copying, every two seconds.
  */
 #include <android/configuration.h>
 #include <android/input.h>
@@ -29,6 +33,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/system_properties.h>
 #include <time.h>
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "uvl", __VA_ARGS__)
@@ -412,7 +417,11 @@ static void *run(void *arg) {
     LOG("Lean initialization failed");
     ANativeActivity_finish(app->activity);
   }
-  double last = now_ms();
+  char prop[PROP_VALUE_MAX] = "";
+  __system_property_get("debug.uvl.stats", prop);
+  int stats = prop[0] && prop[0] != '0';
+  double last = now_ms(), since = last, step_ms = 0, present_ms = 0;
+  int frames = 0;
   while (!app->destroyRequested) {
     int animating = 0;
     if (g.rt) {
@@ -437,6 +446,8 @@ static void *run(void *arg) {
     memcpy(lean_float_array_cptr(raw), g.events, sizeof(double) * 5 * g.nevents);
     g.nevents = 0;
     g.rt = uvl_host_step(g.rt, raw, dt > 100 ? 100 : dt);
+    double t1 = now_ms();
+    step_ms += t1 - t;
     lean_inc(g.rt);
     if (uvl_host_quit(g.rt)) {
       ANativeActivity_finish(app->activity);
@@ -446,7 +457,20 @@ static void *run(void *arg) {
     set_keyboard(uvl_host_text_focus(g.rt));
     if (!g.has_window) continue;
     lean_inc(g.rt);
-    if (uvl_host_dirty(g.rt)) present();
+    if (uvl_host_dirty(g.rt)) {
+      present();
+      frames++;
+    }
+    double t2 = now_ms();
+    present_ms += t2 - t1;
+    if (stats && t2 - since >= 2000) {
+      if (frames)
+        LOG("stats: %.1f fps | per frame: step %.2f ms, raster+copy %.2f ms", frames * 1000 / (t2 - since),
+            step_ms / frames, present_ms / frames);
+      since = t2;
+      step_ms = present_ms = 0;
+      frames = 0;
+    }
   }
   set_keyboard(0);
   g.has_window = 0;
