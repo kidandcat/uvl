@@ -10,6 +10,8 @@
  *   1 move (x, y)        2 down (x, y, button)   3 up (x, y, button)
  *   4 wheel (dx, dy)     5 key down (keycode)    6 key up (keycode)
  *   7 text (codepoint)   8 resize (w, h)         9 quit     10 pointer leave
+ *   11/12 composition    13/14/15 touch down/move/up (finger id, x, y)
+ *   16 pinch (scale, x, y)
  */
 #include <lean/lean.h>
 #include <SDL3/SDL.h>
@@ -20,6 +22,16 @@
 
 /* native/gpu_shell.c */
 int uvl_wgpu_init(const WGPUChainedStruct *surface_desc, const char *wgsl, const char *entries);
+
+#ifdef __APPLE__
+/* Cocoa only works on the process's main thread, but Lean runs `main` on a
+ * new thread with a bigger stack unless LEAN_MAIN_USE_THREAD=0. This runs
+ * before `main`, so the whole app (and SDL) stays on the main thread, whose
+ * stack is 8 MB on macOS. */
+__attribute__((constructor)) static void uvl_main_on_main_thread(void) {
+  setenv("LEAN_MAIN_USE_THREAD", "0", 0);
+}
+#endif
 
 static SDL_Window *win = NULL;
 static SDL_Renderer *ren = NULL;
