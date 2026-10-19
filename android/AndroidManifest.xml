@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- A NativeActivity app: the APK has no Java code, only lib/<abi>/libuvl.so
-     (android/android_shell.c plus the Lean app). -->
+     (android/android_shell.c plus the Lean app).
+     Heap pointer tagging is off: the Lean runtime frees some objects through
+     pointers whose top byte it has cleared, which arm64 devices abort on. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.kidandcat.uvl"
     android:versionCode="1"
@@ -10,6 +12,7 @@
       android:label="UVL"
       android:hasCode="false"
       android:extractNativeLibs="false"
+      android:allowNativeHeapPointerTagging="false"
       android:theme="@android:style/Theme.Material.Light.NoActionBar">
     <activity
         android:name="android.app.NativeActivity"

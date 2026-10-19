@@ -89,8 +89,8 @@ if [ ! -f "$INIT_C/.done" ]; then
   log "generating C for Init (takes a few minutes, cached)"
   mkdir -p "$INIT_C"
   (cd "$PREFIX/src/lean" && { echo Init.lean; find Init -name '*.lean'; }) |
-    xargs -P "$JOBS" -I{} sh -c 'f={}; cd '"$PREFIX/src/lean"' &&
-      lean --root=. -c '"$INIT_C"'/$(echo "${f%.lean}" | tr / _).c "$f" > /dev/null'
+    xargs -P "$JOBS" -n 1 sh -c 'f=$1; cd '"$PREFIX/src/lean"' &&
+      lean --root=. -c '"$INIT_C"'/$(echo "${f%.lean}" | tr / _).c "$f" > /dev/null' sh
   touch "$INIT_C/.done"
 fi
 EXTRA_KEY=$(echo "$CORE_EXTRA" | md5sum | cut -c1-12)
@@ -153,9 +153,9 @@ for ABI in $ABIS; do
         process object_ref mpn mutex libuv uv/net_addr uv/event_loop uv/timer uv/tcp uv/udp
         uv/dns uv/signal uv/system"
     for f in $RT; do echo "$SRC/src/runtime/$f.cpp"; done > "$OBJ/list"
-    xargs -P "$JOBS" -I{} sh -c 'f={}; o='"$OBJ"'/$(echo "$f" | md5sum | cut -c1-12).o;
+    xargs -P "$JOBS" -n 1 sh -c 'f=$1; o='"$OBJ"'/$(echo "$f" | md5sum | cut -c1-12).o;
       '"$CXX"' -std=c++20 -DLEAN_MULTI_THREAD '"$CFLAGS"' -I'"$INC"' -I'"$SRC/src"' \
-        -I'"$SRC/src/runtime"' -I'"$UV/include"' -c "$f" -o "$o"' < "$OBJ/list"
+        -I'"$SRC/src/runtime"' -I'"$UV/include"' -c "$f" -o "$o"' sh < "$OBJ/list"
     # no OpenSSL on Android: its no-OpenSSL variant only reports a version of 0
     $CXX -std=c++20 $CFLAGS -DLEAN_EMSCRIPTEN -I"$INC" -I"$SRC/src" -c "$SRC/src/runtime/openssl.cpp" -o "$OBJ/openssl.o"
     "$LLVM/llvm-ar" rcs "$OUT/libleanrt.a" "$OBJ"/*.o
@@ -166,7 +166,7 @@ for ABI in $ABIS; do
     log "[$ABI] compiling Init"
     OBJ=$OUT/init-obj
     rm -rf "$OBJ" && mkdir -p "$OBJ"
-    ls "$INIT_C"/*.c | xargs -P "$JOBS" -I{} sh -c 'f={}; '"$CC"' '"$CFLAGS"' -I'"$INC"' -c "$f" -o '"$OBJ"'/$(basename "${f%.c}").o'
+    ls "$INIT_C"/*.c | xargs -P "$JOBS" -n 1 sh -c 'f=$1; '"$CC"' '"$CFLAGS"' -I'"$INC"' -c "$f" -o '"$OBJ"'/$(basename "${f%.c}").o' sh
     "$LLVM/llvm-ar" rcs "$OUT/libInit.a" "$OBJ"/*.o
   fi
   if [ ! -f "$OUT/libExtra-$EXTRA_KEY.a" ]; then
@@ -180,8 +180,8 @@ for ABI in $ABIS; do
   log "[$ABI] compiling the app"
   APP=$OUT/app
   rm -rf "$APP" && mkdir -p "$APP"
-  xargs -P "$JOBS" -I{} sh -c 'f={}; o='"$APP"'/$(echo "$f" | sed "s|.lake/build/ir/||; s|/|_|g").o;
-    '"$CC"' '"$CFLAGS"' -I'"$INC"' -c "$f" -o "$o"' < "$APP_LIST"
+  xargs -P "$JOBS" -n 1 sh -c 'f=$1; o='"$APP"'/$(echo "$f" | sed "s|.lake/build/ir/||; s|/|_|g").o;
+    '"$CC"' '"$CFLAGS"' -I'"$INC"' -c "$f" -o "$o"' sh < "$APP_LIST"
   GLUE=$NDK/sources/android/native_app_glue
   $CC $CFLAGS -I"$INC" -I"$GLUE" -DUVL_ANDROID_INIT="$INIT_SYM" -c android/android_shell.c -o "$APP/android_shell.o"
   $CC $CFLAGS -I"$GLUE" -c "$GLUE/android_native_app_glue.c" -o "$APP/android_native_app_glue.o"
@@ -200,7 +200,15 @@ for ABI in $ABIS; do
     grep -o 'undefined symbol: [A-Za-z0-9_]*' "$APP/link1.log" | cut -d' ' -f3 | sort -u > "$APP/undef" || true
     if [ ! -s "$APP/undef" ]; then cat "$APP/link1.log" >&2; exit 1; fi
     # also specializations made in Lean/Std of core functions (`l_List_lookup___at___00Lean_...`)
-    BAD=$(grep -v -E '^(l_.*(Lean|Std)_|initialize_Lean|initialize_Std)' "$APP/undef" || true)
+    # and functions the Lean/Std packages export under a C name (`lean_infer_type`
+    # for `Lean.Meta.inferType`, used by elaborators)
+    EXPORTS=$CACHE/lean-std-exports
+    if [ ! -f "$EXPORTS" ]; then
+      grep -rhoE '@\[export [A-Za-z0-9_]+\]' "$PREFIX/src/lean/Lean" "$PREFIX/src/lean/Std" |
+        sed -E 's/@\[export ([A-Za-z0-9_]+)\]/\1/' | sort -u > "$EXPORTS"
+    fi
+    BAD=$(grep -v -E '^(l_.*(Lean|Std)_|initialize_Lean|initialize_Std)' "$APP/undef" |
+      grep -v -x -F -f "$EXPORTS" || true)
     if [ -n "$BAD" ]; then
       echo "error: undefined symbols that are not compile-time-only:" >&2
       echo "$BAD" >&2
@@ -216,7 +224,7 @@ for ABI in $ABIS; do
       echo '  return lean_io_result_mk_ok(lean_box(0));'
       echo '}'
       { grep '^initialize_' "$APP/undef" || true; } | sed 's/.*/lean_object *&(uint8_t b) { return init_extra(b); }/'
-      { grep '^l_' "$APP/undef" || true; } | sed 's/.*/void &(void) { lean_internal_panic("compile-time-only symbol called: &"); }/'
+      { grep -v '^initialize_' "$APP/undef" || true; } | sed 's/.*/void &(void) { lean_internal_panic("compile-time-only symbol called: &"); }/'
     } > "$STUBS"
     log "[$ABI] stubbed $(wc -l < "$APP/undef") compile-time-only symbols"
     $CC $CFLAGS -I"$INC" -c "$STUBS" -o "$APP/gen_stubs.o"
