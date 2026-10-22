@@ -14,6 +14,16 @@
 
 void lean_initialize(void) {}
 
+/*
+ * See android/lean_stubs.c: the HTML elaborator references `lean_infer_type`
+ * (`Lean.Meta.inferType`). The compiler is not linked into the wasm module.
+ */
+lean_object *lean_infer_type(lean_object *e, lean_object *lctx, lean_object *localInsts,
+                             lean_object *cfg, lean_object *mctx) {
+  (void)e; (void)lctx; (void)localInsts; (void)cfg; (void)mctx;
+  lean_internal_panic("compile-time-only symbol called: lean_infer_type");
+}
+
 const char *uv_strerror(int err) {
   (void)err;
   return "I/O error";

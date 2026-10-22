@@ -10,7 +10,7 @@ android/
   android_shell.c      NativeActivity main loop: touch and keys in, pixels out
   AndroidManifest.xml  one NativeActivity, no code (android:hasCode="false")
   build.sh             Lean runtime + Init + app for each ABI, then the APK
-  lean_stubs.c         lean_initialize (the Lean compiler is not linked)
+  lean_stubs.c         lean_initialize and lean_infer_type (the compiler is not linked)
   smoke.sh             install, launch, tap and type on an emulator or device (adb)
 ```
 

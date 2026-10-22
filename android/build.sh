@@ -191,6 +191,7 @@ for ABI in $ABIS; do
   # Elaborators and `bv_decide` reflection terms reference `Lean`/`Std`, which
   # are not linked. Closed terms are initialized lazily, so this code never runs
   # in an app; the stubs panic loudly if it ever does (see web/build.sh).
+  # `lean_infer_type` (HTML elaborator) is defined in android/lean_stubs.c.
   SO=$STAGE/lib/$ABI/libuvl.so
   mkdir -p "$(dirname "$SO")"
   LINK=($CXX -shared -o "$SO" "$APP"/*.o "$OUT/libExtra-$EXTRA_KEY.a" "$OUT/libInit.a" "$OUT/libleanrt.a"
