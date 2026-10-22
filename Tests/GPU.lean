@@ -63,8 +63,32 @@ def counterScene : Scene :=
   let rt := Runtime.start Examples.Counter.app 320 240
   ⟨"counter", 320, 240, rt.tree.2.toOps 0 0 rt.pointerState, rt.app.background⟩
 
+/-- Same primitives as the demo, drawn at half size.
+
+The interpreter runs once per pixel of every primitive. The demo background
+alone is 480×320, and path fills walk their edges at every sample, so the
+full frame dominates `lake test`. Half scale keeps every op — the same
+kinds, shapes, paints and glyphs — and the CPU golden of the full frame
+stays in `Tests/Main.lean`. -/
+def scaledPrimitives : Array RenderOp :=
+  #[.transform (Affine.scale 0.5 0.5) Examples.primitives]
+
+/-- Kind, shape, stroke mode and paint of each lowered primitive, once. -/
+def primTags (w h : Nat) (ops : Array RenderOp) : Array Nat := Id.run do
+  let b := Batch.build w h ops
+  let mut tags : Array Nat := #[]
+  for i in [0:b.count] do
+    let base := i * primStride
+    let kind := b.prims[base]!.toUInt64.toNat
+    let shape := b.prims[base + 1]!.toUInt64.toNat
+    let mode := b.prims[base + 2]!.toUInt64.toNat
+    let paint := b.prims[base + 24]!.toUInt64.toNat
+    let tag := kind * 1000 + shape * 100 + mode * 10 + paint
+    if !tags.contains tag then tags := tags.push tag
+  return tags
+
 def scenes : List Scene := [
-  ⟨"primitives", 480, 320, Examples.primitives, Color.white⟩,
+  ⟨"primitives", 240, 160, scaledPrimitives, Color.white⟩,
   ⟨"hello", 320, 160, Examples.hello.toOps 320 160, Color.hex 0xECEFF1⟩,
   counterScene
 ]
@@ -89,6 +113,10 @@ def run : IO Bool := do
     (patchOk a.prims b.prims && patchOk a.data b.data && patchOk b.prims a.prims
       && patchOk .empty b.prims && Batch.rangesSize rs < b.prims.size
       && (Batch.changedRanges b.prims b.prims).size == 0)) && ok
+  let fullTags := primTags 480 320 Examples.primitives
+  let halfTags := primTags 240 160 scaledPrimitives
+  ok := (← check s!"primitives at half scale still lower every kind ({halfTags.size} tags, full scene {fullTags.size})"
+    (fullTags.all halfTags.contains && halfTags.all fullTags.contains)) && ok
   for s in scenes do
     let t0 ← IO.monoMsNow
     let (mx, n) := compare (referenceRender s.w s.h s.ops s.bg).data (Raster.render s.w s.h s.ops s.bg).data
