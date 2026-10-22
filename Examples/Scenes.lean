@@ -40,7 +40,7 @@ open UI in
 def dashboard : UI.Widget Unit := ui! pad 20:
   col (gap := 16) (align := .stretch):
     row (gap := 12):
-      text "UVL" (size := 3) (color := Color.hex 0x0D47A1)
+      label "UVL" (size := 22) (msdf := true) (color := Color.hex 0x0D47A1)
       spacer
       chip "Lean 4"
       chip "100% pure" (color := Color.hex 0xC8E6C9) (textColor := Color.hex 0x1B5E20)
@@ -48,17 +48,17 @@ def dashboard : UI.Widget Unit := ui! pad 20:
       expanded:
         card:
           col (gap := 10) (align := .stretch):
-            text "Sales per quarter"
+            label "Sales per quarter" (size := 16) (msdf := true)
             barChart [("Q1", 12), ("Q2", 19), ("Q3", 7), ("Q4", 24)] (h := 180)
       card:
         col (gap := 10) (align := .center):
-          text "Share"
+          label "Share" (size := 16) (msdf := true)
           donutChart [5, 3, 2, 1]
     expanded:
       card:
         col (gap := 10) (align := .stretch):
           row:
-            text "Active users"
+            label "Active users" (size := 16) (msdf := true)
             spacer
             button "Export" (size := 1)
           expanded: lineChart [[3, 5, 4, 8, 7, 11, 10, 14], [1, 2, 4, 3, 6, 5, 8, 9]]

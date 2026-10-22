@@ -75,8 +75,8 @@ With `msdf := true` (or `Text.linesOpsMSDF`), glyphs are drawn from the font's *
 atlas** ([Render/MSDF.lean](UVL/Render/MSDF.lean)) instead: each glyph is turned once, in
 Lean, into a 32×32 grid of three signed distances (edge coloring at corners, pseudo-distances,
 sign fixed by winding number), and drawing costs a bilinear lookup and a median per pixel at
-any size, rotation or scale. Cells are generated on first use (about 2.5 ms per glyph), and on the CPU an MSDF line
-draws faster than its outlines (540 characters at 14 px: about 15 ms vs 19 ms per 800×600 frame). On the
+any size, rotation or scale. Cells are generated on first use (about 1.7 ms per glyph), and on the CPU an MSDF line
+draws in about the same time as its outlines (540 characters at 14 px: about 7 ms per 800×600 frame, either way, on this machine). On the
 GPU the atlas is a buffer that persists across frames: each glyph's cell is uploaded once.
 
 ![msdf](Tests/golden/msdf.png)
@@ -91,7 +91,7 @@ Indentation-based syntax: each line is `widget args*`, and `:` opens a block of 
 def dashboard : UI.Widget Unit := ui! pad 20:
   col (gap := 16) (align := .stretch):
     row (gap := 12):
-      text "UVL" (size := 3)
+      label "UVL" (size := 22) (msdf := true)
       spacer
       chip "Lean 4"
     expanded:
@@ -316,25 +316,26 @@ The counter is a 2 MB `.wasm`. Any app works: export a constructor with
 The desktop uses the same program through wgpu-native; CI checks it headless
 (`uvl-gpu-check`, at most 3/255 off, MSDF text included) and in an X11 window on Xvfb.
 
-Per frame, the CPU only builds the view and the primitives: 0.07 ms for the counter and
-0.33 ms for the dashboard natively (0.4 ms and 1.9 ms in WebAssembly), instead of 55 and 90 ms
-of rasterization. The shading work itself has only been measured on lavapipe, a software
-Vulkan implementation that runs on the CPU, so CI has no meaningful GPU timings.
+Per frame, the CPU only builds the view and the primitives: 0.10 ms for the counter and
+0.47 ms for the dashboard natively, instead of 36 and 70 ms of rasterization. The shading
+work itself has only been measured on lavapipe, a software Vulkan implementation that runs
+on the CPU, so CI has no meaningful GPU timings.
 
 ### Performance
 
-`lake exe uvl-bench` measures CPU time per full frame, one core, 800×600: about 55 ms for the
-counter and 90 ms for the dashboard natively; WebAssembly in V8 is about 1.3× slower. Frames
-are only rendered when something changed, and then only partially; in the browser the GPU
-renderer replaces CPU rasterization altogether. What matters most on the CPU:
+`lake exe uvl-bench 8` measures CPU time per full frame, one core, 800×600: 36 ms for the
+counter and 70 ms for the dashboard. Frames are only rendered when something changed, and
+then only partially; in the browser the GPU renderer replaces CPU rasterization altogether.
+What matters most on the CPU:
 
 * **Partial redraw** ([Render/Damage.lean](UVL/Render/Damage.lean)): `Runtime.present`
   diffs the new scene against the last presented one (structurally, through groups,
   transforms and clips), repaints only the damaged windows and copies them into the previous
   frame, which is updated in place. Shells upload only those windows (`writeTexture` with an
   origin in WebGPU, dirty rectangles in Canvas 2D). The result is bit-identical to a full
-  render (checked by the tests). Hovering a counter button repaints about 6 000 of 480 000
-  pixels: **1.7 ms** instead of 56 ms.
+  render (checked by the tests). Hovering a counter button repaints 5 912 of 480 000
+  pixels: **1.2 ms** instead of 36 ms. A tap on the counter, which repaints the label,
+  is 13.7 ms for 257 506 pixels.
 
 * The rasterizer exploits that an SDF is 1-Lipschitz: one evaluation skips whole runs of
   pixels outside the shape or fills whole runs inside it, and only the anti-aliased edge is
