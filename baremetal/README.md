@@ -51,19 +51,22 @@ size classes up to 512 B (O(1) free lists), best-fit for larger blocks, and
 defragmentation when it runs out of memory. It never calls `malloc`.
 `uvl_heap_stats()` reports usage.
 
-Measured with the counter at 320×240 on 32 bits, 64×16 tiles:
+Measured with the counter at 320×240, 64×16 tiles, under QEMU (`mps2-an385`,
+Cortex-M3, `-O2`). The 32-bit host build reports the same live totals. The
+bitmap font is a static table (`uvl_glyph_rows`, 735 bytes, plus 210 bytes of
+code points) in `.rodata`, which the linker script places in flash.
 
 | | |
 | --- | --- |
-| Live after `uvl_rt_init` + `uvl_init` | ~38 KB (closed constants, incl. ~23 KB glyph table) |
-| Peak live memory while rendering | ~62 KB |
-| Pool high-water mark (including fragmentation) | ~71 KB of 96 KB |
-| ARM code (Thumb-2, `-O2`) | ~347 KB of `.text` including newlib + semihosting |
+| Live after `uvl_rt_init` + `uvl_init` | 23 224 B |
+| Peak live memory while rendering frame 1 | 34 824 B |
+| Pool high-water mark (including fragmentation) | 72 392 B of 96 KB |
+| ARM image | 610 996 B text, 2 016 B data, 259 816 B bss |
 
-That fits an RP2040 (264 KB SRAM, 2 MB flash) and an ESP32. Most of the
-post-init footprint is `Font.glyphTable`, built as an `Array` at startup;
-moving it to static data in flash would save ~23 KB of RAM and is the next
-obvious optimization.
+On the previous build the same scene held 49 008 B live after `uvl_init`
+(the glyph masks were a Lean `Array` allocated on the heap) and 653 068 B of
+text. Frames stay byte-identical to the native Lean reference. The image still
+fits an RP2040 (264 KB SRAM, 2 MB flash) and an ESP32.
 
 ### 32-bit details
 

@@ -389,7 +389,7 @@ def drawText (fb : FrameBuffer w h) (ctx : Ctx w h) (pos : Vec2) (s : String)
   let sc := scale * ctx.m.scaleFactor
   let chars := s.toList.toArray
   (Array.range chars.size).foldl (init := fb) fun fb k =>
-    let g := Font.glyph chars[k]!
+    let ch := chars[k]!
     let gx := o.x + (k * Font.advance).toF * sc
     let c := ctx.clipTo ⟨gx, o.y, 5.0 * sc, 7.0 * sc⟩
     -- per pixel row: vertical overlap with each glyph row (separable box filter)
@@ -397,7 +397,7 @@ def drawText (fb : FrameBuffer w h) (ctx : Ctx w h) (pos : Vec2) (s : String)
       overlap py (py + 1.0) (o.y + j.toF * sc) (o.y + (j + 1).toF * sc)
     -- per pixel column: horizontal coverage of each glyph row's bits
     let rowCov := fun (px : Float) => (Array.range 7).map fun j =>
-      let bits := g[j]!
+      let bits := Font.glyphRow ch j
       (Array.range 5).foldl (init := 0.0) fun acc i =>
         if (bits >>> (4 - i)) % 2 == 1 then
           acc + overlap px (px + 1.0) (gx + i.toF * sc) (gx + (i + 1).toF * sc)
