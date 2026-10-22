@@ -491,7 +491,24 @@ def drawGlyphs (fb : FrameBuffer w h) (ctx : Ctx w h) (atlas : MSDF.Atlas)
           | none => paint.colorAt (inv.apply ⟨pxc, py⟩)
         fb.blend x y col a
 
-partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → FrameBuffer w h
+-- Containers recurse through `renderArray`. `sizeOf` of a child is strictly
+-- smaller than `sizeOf` of the array that holds it, and that array is strictly
+-- smaller than the container op, so the mutual recursion terminates.
+mutual
+
+/-- Draw `ops[i:]` left to right. -/
+def renderArray (ctx : Ctx w h) (ops : Array RenderOp) (i : Nat) (fb : FrameBuffer w h) :
+    FrameBuffer w h :=
+  if h : i < ops.size then
+    renderArray ctx ops (i + 1) (renderOp ctx fb ops[i])
+  else
+    fb
+termination_by (sizeOf ops, ops.size - i)
+
+/-- Draw one op. Containers recurse through `renderArray`; a child is a
+smaller `sizeOf` than the container that holds it. -/
+def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) (op : RenderOp) : FrameBuffer w h :=
+  match op with
   | .fill (.path p rule) paint => fillPolys fb ctx (p.flatten ctx.m) rule paint
   | .fill s paint =>
     match (if ctx.fixedOk then sdfQOf ctx.m s else none), sdfOf s with
@@ -512,9 +529,12 @@ partial def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) : RenderOp → Frame
       (blur * ctx.m.scaleFactor)
   | .text pos s scale c => drawText fb ctx pos s scale c
   | .glyphs atlas quads paint => drawGlyphs fb ctx atlas quads paint
-  | .transform m ops => ops.foldl (renderOp { ctx with m := ctx.m.compose m }) fb
-  | .clip r ops => ops.foldl (renderOp { ctx with clip := ctx.clipTo (ctx.m.mapRect r) }) fb
-  | .group ops => ops.foldl (renderOp ctx) fb
+  | .transform m ops => renderArray { ctx with m := ctx.m.compose m } ops 0 fb
+  | .clip r ops => renderArray { ctx with clip := ctx.clipTo (ctx.m.mapRect r) } ops 0 fb
+  | .group ops => renderArray ctx ops 0 fb
+termination_by (sizeOf op, 0)
+
+end
 
 /-- Render a scene onto an existing buffer. -/
 def renderInto (fb : FrameBuffer w h) (ops : Array RenderOp) (fixed : Bool := false) :

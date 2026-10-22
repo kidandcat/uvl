@@ -39,9 +39,26 @@ def Rect.union (a b : Rect) : Rect :=
   let x0 := Min.min a.x b.x; let y0 := Min.min a.y b.y
   ⟨x0, y0, Max.max (a.x + a.w) (b.x + b.w) - x0, Max.max (a.y + a.h) (b.y + b.h) - y0⟩
 
+-- `sizeOf` of a child is strictly smaller than the array, and the array is
+-- strictly smaller than the container, so this mutual recursion terminates.
+mutual
+
+/-- Union of `bounds m` over `ops[i:]`, starting from `acc`. -/
+def boundsAll (m : Affine) (ops : Array RenderOp) (i : Nat) (acc : Option Rect) : Option Rect :=
+  if h : i < ops.size then
+    let acc := match acc, bounds m ops[i] with
+      | none, b => b
+      | a, none => a
+      | some a, some b => some (Rect.union a b)
+    boundsAll m ops (i + 1) acc
+  else
+    acc
+termination_by (sizeOf ops, ops.size - i)
+
 /-- Conservative device-space bounds of an op drawn through `m`; `none` when the
 op draws nothing. Generous margins: over-approximating only costs a little time. -/
-partial def bounds (m : Affine) : RenderOp → Option Rect
+def bounds (m : Affine) (op : RenderOp) : Option Rect :=
+  match op with
   | .fill s _ => some ((m.mapRect s.bounds).inflate 2.0)
   | .stroke s width _ =>
     some ((m.mapRect (s.bounds.inflate (width / 2.0))).inflate (2.0 + width * m.scaleFactor))
@@ -56,19 +73,15 @@ partial def bounds (m : Affine) : RenderOp → Option Rect
     quads.foldl (init := none) fun acc q =>
       let r := (m.mapRect (atlas.quadRect q)).inflate 2.0
       some (match acc with | some a => Rect.union a r | none => r)
-  | .transform m' ops => boundsAll (m.compose m') ops
-  | .clip r ops => (boundsAll m ops).map fun b =>
+  | .transform m' ops => boundsAll (m.compose m') ops 0 none
+  | .clip r ops => (boundsAll m ops 0 none).map fun b =>
     -- intersection is contained in both; keep the smaller one cheaply
     let c := (m.mapRect r).inflate 1.0
     if c.w * c.h < b.w * b.h then c else b
-  | .group ops => boundsAll m ops
-where
-  boundsAll (m : Affine) (ops : Array RenderOp) : Option Rect :=
-    ops.foldl (init := none) fun acc op =>
-      match acc, bounds m op with
-      | none, b => b
-      | a, none => a
-      | some a, some b => some (Rect.union a b)
+  | .group ops => boundsAll m ops 0 none
+termination_by (sizeOf op, 0)
+
+end
 
 end RenderOp
 

@@ -179,95 +179,150 @@ def contourPath (p : Path) (pts : Array (Float × Float × Bool)) : Path := Id.r
   if let some c := ctrl then path := path.quadTo c.x c.y start.x start.y
   return path.close
 
-/-- Outline of glyph `g` through the affine map `m` (composites recurse). -/
-partial def outline (d : ByteArray) (glyf loca : Nat) (longLoca : Bool) (numGlyphs : Nat)
-    (g : Nat) (m : Affine) (depth : Nat := 0) (acc : Path := {}) : Path := Id.run do
-  if g ≥ numGlyphs || depth > 8 then return acc
-  let (o0, o1) :=
-    if longLoca then (u32 d (loca + 4 * g), u32 d (loca + 4 * g + 4))
-    else (2 * u16 d (loca + 2 * g), 2 * u16 d (loca + 2 * g + 2))
-  if o1 ≤ o0 then return acc
-  let o := glyf + o0
-  let nc := i16 d o
-  if nc ≥ 0 then
-    -- simple glyph
-    let nc := nc.toNat
-    let ends := (List.range nc).map fun i => u16 d (o + 10 + 2 * i)
-    let npts := match ends.getLast? with | some e => e + 1 | none => 0
-    let ilen := u16 d (o + 10 + 2 * nc)
-    let mut p := o + 12 + 2 * nc + ilen
-    let mut flags : Array Nat := #[]
-    while flags.size < npts do
+/-- Push `v` onto `a` exactly `n` times. -/
+private def repeatPush (a : Array Nat) (v n : Nat) : Array Nat :=
+  match n with
+  | 0 => a
+  | n + 1 => (repeatPush a v n).push v
+
+private theorem repeatPush_size (a : Array Nat) (v n : Nat) :
+    (repeatPush a v n).size = a.size + n := by
+  induction n with
+  | zero => rfl
+  | succ n ih => simp [repeatPush, Array.size_push, ih, Nat.add_assoc]
+
+/-- Repeat-flag expansion. Each step pushes at least one flag, so
+`npts - flags.size` decreases; a step that runs past `npts` stops. -/
+def readFlags (d : ByteArray) (npts p : Nat) : Array Nat × Nat :=
+  let rec go (p : Nat) (flags : Array Nat) : Array Nat × Nat :=
+    if h : flags.size < npts then
       let f := u8 d p
-      p := p + 1
-      flags := flags.push f
       if f &&& 8 != 0 then
-        let r := u8 d p
-        p := p + 1
-        for _ in [0:r] do flags := flags.push f
-    let mut xs : Array Int := #[]
-    let mut v : Int := 0
-    for f in flags do
-      if f &&& 2 != 0 then
-        let dx := u8 d p
-        p := p + 1
-        v := v + (if f &&& 16 != 0 then (dx : Int) else -(dx : Int))
-      else if f &&& 16 == 0 then
-        v := v + i16 d p
-        p := p + 2
-      xs := xs.push v
-    let mut ys : Array Int := #[]
-    v := 0
-    for f in flags do
-      if f &&& 4 != 0 then
-        let dy := u8 d p
-        p := p + 1
-        v := v + (if f &&& 32 != 0 then (dy : Int) else -(dy : Int))
-      else if f &&& 32 == 0 then
-        v := v + i16 d p
-        p := p + 2
-      ys := ys.push v
-    let mut path := acc
-    let mut s := 0
-    for e in ends do
-      let pts := (List.range (e + 1 - s)).toArray.map fun k =>
-        let q := m.apply ⟨Float.ofInt xs[s + k]!, Float.ofInt ys[s + k]!⟩
-        (q.x, q.y, flags[s + k]! &&& 1 != 0)
-      path := contourPath path pts
-      s := e + 1
-    return path
-  else
-    -- composite glyph
-    let mut p := o + 10
-    let mut path := acc
-    let mut more := true
-    while more do
+        let r := u8 d (p + 1)
+        go (p + 2) (repeatPush flags f (r + 1))
+      else
+        go (p + 1) (flags.push f)
+    else
+      (flags, p)
+  termination_by npts - flags.size
+  decreasing_by
+    all_goals
+      simp only [repeatPush_size, Array.size_push]
+      omega
+  go p #[]
+
+-- Composite glyphs get a fuel of `9 - depth` (the outline stops once eight
+-- levels are open). The component list is a separate walk with a byte budget,
+-- so a missing MORE flag cannot loop. Measures are `(fuel, phase, budget)`:
+-- a composite calls the walk at `fuel - 1`, and the walk calls the child
+-- outline at the same fuel but a lower phase.
+mutual
+
+private def outlineFuel (d : ByteArray) (glyf loca : Nat) (longLoca : Bool) (numGlyphs : Nat)
+    (g : Nat) (m : Affine) (fuel : Nat) (acc : Path) : Path :=
+  match fuel with
+  | 0 => acc
+  | fuel + 1 =>
+    if g ≥ numGlyphs then acc else
+    let (o0, o1) :=
+      if longLoca then (u32 d (loca + 4 * g), u32 d (loca + 4 * g + 4))
+      else (2 * u16 d (loca + 2 * g), 2 * u16 d (loca + 2 * g + 2))
+    if o1 ≤ o0 then acc else
+    let o := glyf + o0
+    let nc := i16 d o
+    if nc ≥ 0 then Id.run do
+      let nc := nc.toNat
+      let ends := (List.range nc).map fun i => u16 d (o + 10 + 2 * i)
+      let npts := match ends.getLast? with | some e => e + 1 | none => 0
+      let ilen := u16 d (o + 10 + 2 * nc)
+      let (flags, p0) := readFlags d npts (o + 12 + 2 * nc + ilen)
+      let mut p := p0
+      let mut xs : Array Int := #[]
+      let mut v : Int := 0
+      for f in flags do
+        if f &&& 2 != 0 then
+          let dx := u8 d p
+          p := p + 1
+          v := v + (if f &&& 16 != 0 then (dx : Int) else -(dx : Int))
+        else if f &&& 16 == 0 then
+          v := v + i16 d p
+          p := p + 2
+        xs := xs.push v
+      let mut ys : Array Int := #[]
+      v := 0
+      for f in flags do
+        if f &&& 4 != 0 then
+          let dy := u8 d p
+          p := p + 1
+          v := v + (if f &&& 32 != 0 then (dy : Int) else -(dy : Int))
+        else if f &&& 32 == 0 then
+          v := v + i16 d p
+          p := p + 2
+        ys := ys.push v
+      let mut path := acc
+      let mut s := 0
+      for e in ends do
+        let pts := (List.range (e + 1 - s)).toArray.map fun k =>
+          let q := m.apply ⟨Float.ofInt xs[s + k]!, Float.ofInt ys[s + k]!⟩
+          (q.x, q.y, flags[s + k]! &&& 1 != 0)
+        path := contourPath path pts
+        s := e + 1
+      return path
+    else
+      -- `o1` is an offset into the glyf table, so the glyph ends at `glyf + o1`.
+      -- A well-formed composite already stops on the MORE flag before that.
+      -- The budget is the bytes left in the glyph, and every component consumes one.
+      let endP := Min.min (glyf + o1) d.size
+      let p := o + 10
+      walkComponents d glyf loca longLoca numGlyphs m fuel p endP acc (endP - p)
+termination_by (fuel, 0, 0)
+
+private def walkComponents (d : ByteArray) (glyf loca : Nat) (longLoca : Bool) (numGlyphs : Nat)
+    (m : Affine) (fuel p endP : Nat) (path : Path) (budget : Nat) : Path :=
+  match budget with
+  | 0 => path
+  | budget + 1 =>
+    if p + 4 ≤ endP then
       let flags := u16 d p
       let sub := u16 d (p + 2)
-      p := p + 4
+      let p := p + 4
       let words := flags &&& 1 != 0
       let (a1, a2) :=
         if words then (i16 d p, i16 d (p + 2)) else
           let b1 := u8 d p; let b2 := u8 d (p + 1)
           ((if b1 ≥ 128 then (b1 : Int) - 256 else b1), (if b2 ≥ 128 then (b2 : Int) - 256 else b2))
-      p := p + (if words then 4 else 2)
-      let mut t : Affine := { e := Float.ofInt a1, f := Float.ofInt a2 }
-      if flags &&& 8 != 0 then
-        let s := f2dot14 d p
-        t := { t with a := s, d := s }
-        p := p + 2
-      else if flags &&& 64 != 0 then
-        t := { t with a := f2dot14 d p, d := f2dot14 d (p + 2) }
-        p := p + 4
-      else if flags &&& 128 != 0 then
-        t := { t with a := f2dot14 d p, b := f2dot14 d (p + 2), c := f2dot14 d (p + 4),
-                      d := f2dot14 d (p + 6) }
-        p := p + 8
+      let p := p + (if words then 4 else 2)
+      let (p, t) :=
+        if flags &&& 8 != 0 then
+          let s := f2dot14 d p
+          (p + 2, ({ e := Float.ofInt a1, f := Float.ofInt a2, a := s, d := s } : Affine))
+        else if flags &&& 64 != 0 then
+          (p + 4, { e := Float.ofInt a1, f := Float.ofInt a2,
+                    a := f2dot14 d p, d := f2dot14 d (p + 2) })
+        else if flags &&& 128 != 0 then
+          (p + 8, { e := Float.ofInt a1, f := Float.ofInt a2,
+                    a := f2dot14 d p, b := f2dot14 d (p + 2),
+                    c := f2dot14 d (p + 4), d := f2dot14 d (p + 6) })
+        else
+          (p, { e := Float.ofInt a1, f := Float.ofInt a2 })
       -- point-matching placement (ARGS_ARE_XY_VALUES unset) is not supported
-      if flags &&& 2 == 0 then t := { t with e := 0, f := 0 }
-      path := outline d glyf loca longLoca numGlyphs sub (m.compose t) (depth + 1) path
-      more := flags &&& 32 != 0
-    return path
+      let t := if flags &&& 2 == 0 then { t with e := 0, f := 0 } else t
+      let path := outlineFuel d glyf loca longLoca numGlyphs sub (m.compose t) fuel path
+      if flags &&& 32 != 0 then
+        walkComponents d glyf loca longLoca numGlyphs m fuel p endP path budget
+      else
+        path
+    else
+      path
+termination_by (fuel, 1, budget)
+
+end
+
+/-- Outline of glyph `g` through the affine map `m`. Composite glyphs nest at
+most eight levels (`depth` is how many are already open). -/
+def outline (d : ByteArray) (glyf loca : Nat) (longLoca : Bool) (numGlyphs : Nat)
+    (g : Nat) (m : Affine) (depth : Nat := 0) (acc : Path := {}) : Path :=
+  outlineFuel d glyf loca longLoca numGlyphs g m (9 - depth) acc
 
 /-- Parse a TrueType font. Outlines are converted once, scaled to the em
 square (1 unit = 1 em) with y pointing down. `atlasId` identifies the font's

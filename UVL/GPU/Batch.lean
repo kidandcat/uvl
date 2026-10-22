@@ -122,8 +122,21 @@ def bands {w h : Nat} (clip : Clip w h) (b : Batch)
     let y1 := Min.min clip.y1 (y0 + bandRows)
     f b y0 y1 { clip with y0, y1, hy := Nat.le_trans (Nat.min_le_left _ _) clip.hy }
 
+-- Same well-founded measure as `Raster.renderOp`: a child is smaller than the
+-- array, and the array is smaller than the container.
+mutual
+
+/-- Lower `ops[i:]` (mirrors `Raster.renderArray`). -/
+def opArray {w h : Nat} (ctx : Ctx w h) (ops : Array RenderOp) (i : Nat) (b : Batch) : Batch :=
+  if h : i < ops.size then
+    opArray ctx ops (i + 1) (op ctx b ops[i])
+  else
+    b
+termination_by (sizeOf ops, ops.size - i)
+
 /-- Lower one op (mirrors `Raster.renderOp`). -/
-partial def op {w h : Nat} (ctx : Ctx w h) (b : Batch) : RenderOp → Batch
+def op {w h : Nat} (ctx : Ctx w h) (b : Batch) (o : RenderOp) : Batch :=
+  match o with
   | .fill (.path p rule) paint =>
     let polys := p.flatten ctx.m
     let edges := edgesOf polys
@@ -200,9 +213,12 @@ partial def op {w h : Nat} (ctx : Ctx w h) (b : Batch) : RenderOp → Batch
         { kind := kindMSDF, inv := ctx.m.inverse, scale := ctx.m.scaleFactor,
           a := ⟨(q.glyph * MSDF.cellFloats).toF, c.x, c.y, c.texel⟩,
           radii := ⟨q.x, q.y, q.size, 0⟩ } paint
-  | .transform m ops => ops.foldl (op { ctx with m := ctx.m.compose m }) b
-  | .clip r ops => ops.foldl (op { ctx with clip := ctx.clipTo (ctx.m.mapRect r) }) b
-  | .group ops => ops.foldl (op ctx) b
+  | .transform m ops => opArray { ctx with m := ctx.m.compose m } ops 0 b
+  | .clip r ops => opArray { ctx with clip := ctx.clipTo (ctx.m.mapRect r) } ops 0 b
+  | .group ops => opArray ctx ops 0 b
+termination_by (sizeOf o, 0)
+
+end
 
 /-- Size in floats of the atlas buffer the batch needs (0 without MSDF glyphs). -/
 def atlasSize (b : Batch) : Nat := (b.atlas.map (·.cells.size)).getD 0 * MSDF.cellFloats

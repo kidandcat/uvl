@@ -307,7 +307,7 @@ def Fn1.wgsl : Fn1 → String
   | .exp => "exp"
 
 mutual
-partial def Expr.toWGSL {t : Ty} : Expr t → String
+def Expr.toWGSL {t : Ty} : Expr t → String
   | .litF x => fmtFloat x
   | .litU n => s!"{n}u"
   | .litB b => if b then "true" else "false"
@@ -338,7 +338,7 @@ partial def Expr.toWGSL {t : Ty} : Expr t → String
   | .load buf i => s!"{buf.name}[{i.toWGSL}]"
   | .call f as => s!"{f.name}({", ".intercalate as.toWGSL})"
 
-partial def Args.toWGSL {ts : List Ty} : Args ts → List String
+def Args.toWGSL {ts : List Ty} : Args ts → List String
   | .nil => []
   | .cons a as => a.toWGSL :: as.toWGSL
 end
@@ -349,19 +349,34 @@ def concatAll : List String → String → String
   | [], acc => acc
   | s :: ss, acc => concatAll ss (acc ++ s)
 
-partial def Stmt.toWGSL (ind : String) : Stmt → String
+-- A statement's children are a smaller `sizeOf` than the statement, and each
+-- element of a statement array is a smaller `sizeOf` than the array.
+mutual
+
+def Stmt.toWGSL (ind : String) (s : Stmt) : String :=
+  match s with
   | @Stmt.decl t n m e => s!"{ind}{if m then "var" else "let"} {n} : {t.wgsl} = {e.toWGSL};\n"
   | .assign n e => s!"{ind}{n} = {e.toWGSL};\n"
   | .ite c th el =>
-    let a := concatAll (th.toList.map (Stmt.toWGSL (ind ++ "  "))) ""
-    let b := concatAll (el.toList.map (Stmt.toWGSL (ind ++ "  "))) ""
+    let a := stmtsToWGSL (ind ++ "  ") th 0
+    let b := stmtsToWGSL (ind ++ "  ") el 0
     if el.isEmpty then s!"{ind}if {c.toWGSL} \{\n{a}{ind}}\n"
     else s!"{ind}if {c.toWGSL} \{\n{a}{ind}} else \{\n{b}{ind}}\n"
   | .loop i lo hi body =>
-    let b := concatAll (body.toList.map (Stmt.toWGSL (ind ++ "  "))) ""
+    let b := stmtsToWGSL (ind ++ "  ") body 0
     s!"{ind}for (var {i} : u32 = {lo.toWGSL}; {i} < {hi.toWGSL}; {i}++) \{\n{b}{ind}}\n"
   | .brk => s!"{ind}break;\n"
   | .ret e => s!"{ind}return {e.toWGSL};\n"
+termination_by (sizeOf s, 0)
+
+def stmtsToWGSL (ind : String) (ss : Array Stmt) (i : Nat) : String :=
+  if h : i < ss.size then
+    Stmt.toWGSL ind ss[i] ++ stmtsToWGSL ind ss (i + 1)
+  else
+    ""
+termination_by (sizeOf ss, ss.size - i)
+
+end
 
 def FnDef.toWGSL (f : FnDef) : String :=
   let ps := ", ".intercalate (f.params.map fun (n, t) => s!"{n} : {t.wgsl}")
@@ -420,98 +435,136 @@ inductive Flow where
 
 instance : Inhabited Flow := ⟨.ret default⟩
 
+/-- Leaving a block: keep the variables of the outer scope, with the values
+assigned inside the block (assignments are recorded as new bindings). -/
+def restore (outer inner : Env) : List (String × Value) :=
+  outer.vars.map fun (n, _) => (n, (inner.vars.lookup n).getD default)
+
+/-- Steps of the reference interpreter before it returns `default`.
+
+Each expression, argument and statement takes one step, and so does each loop
+iteration. One pixel of `shade` is a few thousand steps and the kernels' loops
+run over a few dozen edges or samples, so programs this library builds stay
+inside the bound. A shader that recurses past it used to diverge: the callee
+body is data in `Env`, not a subterm of the call, so the step counter is what
+makes evaluation well-founded. -/
+def evalStepBound : Nat := 10000000
+
 mutual
 
-partial def Expr.eval (env : Env) : {t : Ty} → Expr t → t.denote
-  | _, .litF x => x
-  | _, .litU n => n
-  | _, .litB b => b
-  | t, .var n => env.get t n
-  | .f32, .bin op a b => op.evalF (a.eval env) (b.eval env)
-  | .u32, .bin op a b => op.evalU (a.eval env) (b.eval env)
-  | .v2, .bin op a b =>
-    let a := a.eval env; let b := b.eval env
+def exprEval : Nat → Env → {t : Ty} → Expr t → t.denote
+  | 0, _, _, _ => default
+  | fuel + 1, env, _, .litF x => x
+  | fuel + 1, env, _, .litU n => n
+  | fuel + 1, env, _, .litB b => b
+  | fuel + 1, env, t, .var n => env.get t n
+  | fuel + 1, env, .f32, .bin op a b => op.evalF (exprEval fuel env a) (exprEval fuel env b)
+  | fuel + 1, env, .u32, .bin op a b => op.evalU (exprEval fuel env a) (exprEval fuel env b)
+  | fuel + 1, env, .v2, .bin op a b =>
+    let a := exprEval fuel env a; let b := exprEval fuel env b
     ⟨op.evalF a.x b.x, op.evalF a.y b.y⟩
-  | .v4, .bin op a b => V4.zip op.evalF (a.eval env) (b.eval env)
-  | .bool, .bin .. => default
-  | .f32, .un op a => op.evalF (a.eval env)
-  | .v2, .un op a => let a := a.eval env; ⟨op.evalF a.x, op.evalF a.y⟩
-  | .v4, .un op a => V4.map op.evalF (a.eval env)
-  | _, .un .. => default
-  | _, @Expr.cmp .f32 op a b => op.evalF (a.eval env) (b.eval env)
-  | _, @Expr.cmp .u32 op a b => op.evalU (a.eval env) (b.eval env)
-  | _, .cmp .. => default
-  | _, .and a b => a.eval env && b.eval env
-  | _, .or a b => a.eval env || b.eval env
-  | _, .not a => !(a.eval env)
-  | _, .select c a b =>
-    let a := a.eval env; let b := b.eval env
-    if c.eval env then a else b
-  | _, .scale k v => let k := k.eval env; let v := v.eval env; ⟨k * v.x, k * v.y⟩
-  | _, .vec2 x y => ⟨x.eval env, y.eval env⟩
-  | _, .vec4 x y z w => ⟨x.eval env, y.eval env, z.eval env, w.eval env⟩
-  | _, .x v => (v.eval env).x
-  | _, .y v => (v.eval env).y
-  | _, .comp v i =>
-    let v := v.eval env
+  | fuel + 1, env, .v4, .bin op a b => V4.zip op.evalF (exprEval fuel env a) (exprEval fuel env b)
+  | fuel + 1, _, .bool, .bin .. => default
+  | fuel + 1, env, .f32, .un op a => op.evalF (exprEval fuel env a)
+  | fuel + 1, env, .v2, .un op a => let a := exprEval fuel env a; ⟨op.evalF a.x, op.evalF a.y⟩
+  | fuel + 1, env, .v4, .un op a => V4.map op.evalF (exprEval fuel env a)
+  | fuel + 1, _, _, .un .. => default
+  | fuel + 1, env, _, @Expr.cmp .f32 op a b => op.evalF (exprEval fuel env a) (exprEval fuel env b)
+  | fuel + 1, env, _, @Expr.cmp .u32 op a b => op.evalU (exprEval fuel env a) (exprEval fuel env b)
+  | fuel + 1, _, _, .cmp .. => default
+  | fuel + 1, env, _, .and a b => exprEval fuel env a && exprEval fuel env b
+  | fuel + 1, env, _, .or a b => exprEval fuel env a || exprEval fuel env b
+  | fuel + 1, env, _, .not a => !(exprEval fuel env a)
+  | fuel + 1, env, _, .select c a b =>
+    let a := exprEval fuel env a; let b := exprEval fuel env b
+    if exprEval fuel env c then a else b
+  | fuel + 1, env, _, .scale k v =>
+    let k := exprEval fuel env k; let v := exprEval fuel env v; ⟨k * v.x, k * v.y⟩
+  | fuel + 1, env, _, .vec2 x y => ⟨exprEval fuel env x, exprEval fuel env y⟩
+  | fuel + 1, env, _, .vec4 x y z w =>
+    ⟨exprEval fuel env x, exprEval fuel env y, exprEval fuel env z, exprEval fuel env w⟩
+  | fuel + 1, env, _, .x v => (exprEval fuel env v).x
+  | fuel + 1, env, _, .y v => (exprEval fuel env v).y
+  | fuel + 1, env, _, .comp v i =>
+    let v := exprEval fuel env v
     match i with | 0 => v.x | 1 => v.y | 2 => v.z | 3 => v.w
-  | _, .length v => (v.eval env).length
-  | _, .dot a b => (a.eval env).dot (b.eval env)
-  | _, .toF a => (a.eval env).toFloat
-  | _, .toU a => Float.toU32 (a.eval env)
-  | _, .shr a b => a.eval env >>> b.eval env
-  | _, .band a b => a.eval env &&& b.eval env
-  | _, .load buf i =>
+  | fuel + 1, env, _, .length v => (exprEval fuel env v).length
+  | fuel + 1, env, _, .dot a b => (exprEval fuel env a).dot (exprEval fuel env b)
+  | fuel + 1, env, _, .toF a => (exprEval fuel env a).toFloat
+  | fuel + 1, env, _, .toU a => Float.toU32 (exprEval fuel env a)
+  | fuel + 1, env, _, .shr a b => exprEval fuel env a >>> exprEval fuel env b
+  | fuel + 1, env, _, .band a b => exprEval fuel env a &&& exprEval fuel env b
+  | fuel + 1, env, _, .load buf i =>
     let arr := env.buffers buf.name
-    let i := (i.eval env).toNat
+    let i := (exprEval fuel env i).toNat
     if h : i < arr.size then arr[i] else 0
-  | r, .call f as =>
+  | fuel + 1, env, r, .call f as =>
     match env.fns f.name with
     | none => default
     | some d =>
-      let vals := as.eval env
+      let vals := argsEval fuel env as
       let callee := (d.params.zip vals).foldl (fun e ((n, _), v) => e.bind n v)
         { env with vars := [] }
-      match Stmt.run callee d.body.toList with
+      match stmtRun fuel callee d.body.toList with
       | .ret ⟨t', v⟩ => if h : t' = r then h ▸ v else default
       | _ => default
+termination_by fuel _ _ _ => fuel
 
-partial def Args.eval (env : Env) : {ts : List Ty} → Args ts → List Value
-  | _, .nil => []
-  | _, @Args.cons t _ a as => ⟨t, a.eval env⟩ :: as.eval env
+def argsEval (fuel : Nat) (env : Env) {ts : List Ty} (as : Args ts) : List Value :=
+  match fuel with
+  | 0 => []
+  | fuel + 1 =>
+    match as with
+    | .nil => []
+    | @Args.cons t _ a as => ⟨t, exprEval fuel env a⟩ :: argsEval fuel env as
+termination_by fuel
 
-partial def Stmt.run (env : Env) : List Stmt → Flow
-  | [] => .next env
-  | s :: rest =>
-    match s with
-    | @Stmt.decl t n _ e => Stmt.run (env.bind n ⟨t, e.eval env⟩) rest
-    | @Stmt.assign t n e => Stmt.run (env.bind n ⟨t, e.eval env⟩) rest
-    | .ite c th el =>
-      match Stmt.run env (if c.eval env then th else el).toList with
-      | .next env' => Stmt.run { env with vars := restore env env' } rest
-      | .brk env' => .brk { env with vars := restore env env' }
-      | r => r
-    | .loop i lo hi body =>
-      let hi := hi.eval env
-      let rec go (k : UInt32) (env : Env) : Flow :=
-        if k < hi then
-          match Stmt.run (env.bind i ⟨.u32, k⟩) body.toList with
-          | .next env' => go (k + 1) { env with vars := restore env env' }
-          | .brk env' => .next { env with vars := restore env env' }
-          | r => r
-        else .next env
-      match go (lo.eval env) env with
-      | .next env' => Stmt.run env' rest
-      | r => r
-    | .brk => .brk env
-    | @Stmt.ret t e => .ret ⟨t, e.eval env⟩
-
-/-- Leaving a block: keep the variables of the outer scope, with the values
-assigned inside the block (assignments are recorded as new bindings). -/
-partial def restore (outer inner : Env) : List (String × Value) :=
-  outer.vars.map fun (n, _) => (n, (inner.vars.lookup n).getD default)
+def stmtRun (fuel : Nat) (env : Env) (ss : List Stmt) : Flow :=
+  match fuel with
+  | 0 => .next env
+  | fuel + 1 =>
+    match ss with
+    | [] => .next env
+    | s :: rest =>
+      match s with
+      | @Stmt.decl t n _ e => stmtRun fuel (env.bind n ⟨t, exprEval fuel env e⟩) rest
+      | @Stmt.assign t n e => stmtRun fuel (env.bind n ⟨t, exprEval fuel env e⟩) rest
+      | .ite c th el =>
+        match stmtRun fuel env (if exprEval fuel env c then th else el).toList with
+        | .next env' => stmtRun fuel { env with vars := restore env env' } rest
+        | .brk env' => .brk { env with vars := restore env env' }
+        | r => r
+      | .loop i lo hi body =>
+        let hi := exprEval fuel env hi
+        let rec go (k : UInt32) (fuel : Nat) (env : Env) : Flow :=
+          match fuel with
+          | 0 => .next env
+          | fuel + 1 =>
+            if k < hi then
+              match stmtRun fuel (env.bind i ⟨.u32, k⟩) body.toList with
+              | .next env' => go (k + 1) fuel { env with vars := restore env env' }
+              | .brk env' => .next { env with vars := restore env env' }
+              | r => r
+            else
+              .next env
+        termination_by fuel
+        match go (exprEval fuel env lo) fuel env with
+        | .next env' => stmtRun fuel env' rest
+        | r => r
+      | .brk => .brk env
+      | @Stmt.ret t e => .ret ⟨t, exprEval fuel env e⟩
+termination_by fuel
 
 end
+
+def Expr.eval (env : Env) {t : Ty} (e : Expr t) : t.denote :=
+  exprEval evalStepBound env e
+
+def Args.eval (env : Env) {ts : List Ty} (as : Args ts) : List Value :=
+  argsEval evalStepBound env as
+
+def Stmt.run (env : Env) (ss : List Stmt) : Flow :=
+  stmtRun evalStepBound env ss
 
 /-- Call a shader function from Lean (for tests). -/
 def FnDef.eval (fns : List FnDef) (f : FnDef) (args : List Value)

@@ -35,12 +35,31 @@ def Rect.inter (a b : Rect) : Option Rect :=
   | some b => acc.push b
   | none => acc
 
+-- A child is a smaller `sizeOf` than the array it lives in, and that array is
+-- a smaller `sizeOf` than the container op, so comparing two scenes terminates.
 mutual
 
+/-- Damage between `a[i:]` and `b[i:]` (same length), appended to `acc`. -/
+def diffZip (m : Affine) (acc : Array Rect) (a b : Array RenderOp) (i : Nat) : Array Rect :=
+  if h : i < a.size then
+    if h2 : i < b.size then
+      diffZip m (diffOp m acc a[i] b[i]) a b (i + 1)
+    else
+      acc
+  else
+    acc
+termination_by (sizeOf a + sizeOf b, a.size - i)
+decreasing_by
+  all_goals
+    first
+    | omega
+    | apply Prod.Lex.left
+      exact Nat.add_lt_add (Array.sizeOf_getElem a i h) (Array.sizeOf_getElem b i h2)
+
 /-- Damage between two op sequences drawn through `m`, appended to `acc`. -/
-partial def diffOps (m : Affine) (acc : Array Rect) (a b : Array RenderOp) : Array Rect :=
+def diffOps (m : Affine) (acc : Array Rect) (a b : Array RenderOp) : Array Rect :=
   if a.size == b.size then
-    (List.range a.size).foldl (init := acc) fun acc i => diffOp m acc a[i]! b[i]!
+    diffZip m acc a b 0
   else
     -- an insertion or removal: keep the common prefix and suffix, damage the rest
     let n := Min.min a.size b.size
@@ -49,9 +68,11 @@ partial def diffOps (m : Affine) (acc : Array Rect) (a b : Array RenderOp) : Arr
       |>.getD (n - pre)
     let acc := (a.extract pre (a.size - suf)).foldl (pushBounds m) acc
     (b.extract pre (b.size - suf)).foldl (pushBounds m) acc
+termination_by (sizeOf a + sizeOf b, a.size + 1)
 
 /-- Damage between two ops drawn through `m`. -/
-partial def diffOp (m : Affine) (acc : Array Rect) (x y : RenderOp) : Array Rect :=
+def diffOp (m : Affine) (acc : Array Rect) (x y : RenderOp) : Array Rect :=
+  let changed := pushBounds m (pushBounds m acc x) y
   match x, y with
   | .group as, .group bs => diffOps m acc as bs
   | .transform m1 as, .transform m2 bs =>
@@ -66,8 +87,7 @@ partial def diffOp (m : Affine) (acc : Array Rect) (x y : RenderOp) : Array Rect
         | none => acc
     else changed
   | _, _ => if x == y then acc else changed
-where
-  changed := pushBounds m (pushBounds m acc x) y
+termination_by (sizeOf x + sizeOf y, 0)
 
 end
 
@@ -101,13 +121,25 @@ def ofRect (w h : Nat) (r : Rect) : Option Window :=
   let x1 := px (r.x + r.w).ceil w; let y1 := px (r.y + r.h).ceil h
   if x1 > x0 && y1 > y0 then some ⟨x0, y0, x1 - x0, y1 - y0⟩ else none
 
-/-- Merge windows until none meet. -/
-partial def coalesce (ws : Array Window) : Array Window :=
-  let step := ws.foldl (init := #[]) fun (acc : Array Window) r =>
+/-- One left-to-right pass: union a window into an earlier one when they meet. -/
+def mergePass (ws : Array Window) : Array Window :=
+  ws.foldl (init := #[]) fun (acc : Array Window) r =>
     match acc.findIdx? (·.meets r) with
     | some i => acc.set! i (acc[i]!.union r)
     | none => acc.push r
-  if step.size == ws.size then step else coalesce step
+
+/-- Merge windows until a pass no longer shrinks the list.
+
+A pass never grows the list (each window is either pushed or unioned), so it
+shrinks at most `ws.size` times. `fuel` is that bound; the recursion is
+structural on it. -/
+def coalesce (ws : Array Window) : Array Window :=
+  let rec go (ws : Array Window) : Nat → Array Window
+    | 0 => ws
+    | fuel + 1 =>
+      let step := mergePass ws
+      if step.size < ws.size then go step fuel else step
+  go ws ws.size
 
 end Window
 
