@@ -95,28 +95,35 @@ def sdfOf : Shape → Option (Rect × (Vec2 → Float))
   | .line a b => some (Rect.ofPoints #[a, b], fun p => SDF.segment p a b)
   | .path .. => none
 
-/-- Scan buffer row `y` from column `x` to `c.x1` (one row of `fillDistance`). -/
+/-- Scan buffer row `y` from column `x` to `c.x1` (one row of `fillDistance`).
+
+`constColor` is a solid paint. Fully covered pixels are then one `blendSpan`
+(opaque store, or a translucent blend at a running index) instead of a blend
+per pixel. The bytes match `blend` at coverage 1. -/
 @[specialize] def scanRow (c : Clip w h) (ctx : Ctx w h) (y : Fin h) (outT inT lip blur : Float)
-    (dist : Float → Float) (colorAt : Float → Color) (x : Nat) (fb : FrameBuffer w h) :
-    FrameBuffer w h :=
+    (dist : Float → Float) (colorAt : Float → Color) (constColor : Option Color)
+    (x : Nat) (fb : FrameBuffer w h) : FrameBuffer w h :=
   if hx : x < c.x1 then
     let px := ctx.cx x
     let d := dist px
     if d >= outT then
       -- skip every pixel that is provably outside
-      scanRow c ctx y outT inT lip blur dist colorAt
+      scanRow c ctx y outT inT lip blur dist colorAt constColor
         (x + Max.max 1 (floatToNat ((d - outT) / lip).floor)) fb
     else if d <= inT then
       -- fill every pixel that is provably fully covered
       let n := Max.max 1 (floatToNat ((inT - d) / lip).floor)
       let stop := Min.min c.x1 (x + n)
-      let fb := foldRange x stop (Nat.le_trans (Nat.min_le_left _ _) c.hx) fb fun fb xi =>
-        fb.blend xi y (colorAt (ctx.cx xi.val)) 1.0
-      scanRow c ctx y outT inT lip blur dist colorAt stop fb
+      let fb := match constColor with
+        | some col => fb.blendSpan y x stop col
+        | none =>
+          foldRange x stop (Nat.le_trans (Nat.min_le_left _ _) c.hx) fb fun fb xi =>
+            fb.blend xi y (colorAt (ctx.cx xi.val)) 1.0
+      scanRow c ctx y outT inT lip blur dist colorAt constColor stop fb
     else
       let fb := fb.blend ⟨x, Nat.lt_of_lt_of_le hx c.hx⟩ y (colorAt px)
         (SDF.blurredCoverage d blur)
-      scanRow c ctx y outT inT lip blur dist colorAt (x + 1) fb
+      scanRow c ctx y outT inT lip blur dist colorAt constColor (x + 1) fb
   else fb
 termination_by c.x1 - x
 decreasing_by all_goals omega
@@ -141,12 +148,12 @@ fields, `lip` bounds how fast the value can change per pixel. -/
   | .solid col =>
     foldRange c.y0 c.y1 c.hy fb fun fb y =>
       let cy := ctx.cy y.val
-      scanRow c ctx y outT inT lip blur (rowDist cy) (fun _ => col) c.x0 fb
+      scanRow c ctx y outT inT lip blur (rowDist cy) (fun _ => col) (some col) c.x0 fb
   | _ =>
     foldRange c.y0 c.y1 c.hy fb fun fb y =>
       let cy := ctx.cy y.val
       scanRow c ctx y outT inT lip blur (rowDist cy) (fun px => paint.colorAt (inv.apply ⟨px, cy⟩))
-        c.x0 fb
+        none c.x0 fb
 
 /-! ### Fixed-point path
 
@@ -222,8 +229,11 @@ def fillDistanceQ (fb : FrameBuffer w h) (ctx : Ctx w h) (bbox : Rect) (paint : 
         else if !Scalar.lt inT d then
           let n := Max.max 1 (inT - d - margin).floorNat
           let stop := Min.min c.x1 (x + n)
-          let fb := foldRange x stop (Nat.le_trans (Nat.min_le_left _ _) c.hx) fb fun fb xi =>
-            fb.blend xi y (colorAt (ctx.cx xi.val)) 1.0
+          let fb := match solid with
+            | some col => fb.blendSpan y x stop col
+            | none =>
+              foldRange x stop (Nat.le_trans (Nat.min_le_left _ _) c.hx) fb fun fb xi =>
+                fb.blend xi y (colorAt (ctx.cx xi.val)) 1.0
           go stop fb
         else
           let fb := fb.blend ⟨x, Nat.lt_of_lt_of_le hx c.hx⟩ y (colorAt (ctx.cx x))
@@ -314,13 +324,38 @@ def fillPolys (fb : FrameBuffer w h) (ctx : Ctx w h) (polys : Array Path.Poly)
         if !inside && inside' then start := x
         else if inside && !inside' then acc := addSpan acc (c.x0 + ctx.ox) start x wt
     let solid := match paint with | .solid col => some col | _ => none
-    return foldRange c.x0 c.x1 c.hx fb fun fb x =>
-      let a := acc[x.val - c.x0]!
-      if a <= 0.0 then fb else
-      let col := match solid with
-        | some col => col
-        | none => paint.colorAt (inv.apply ⟨ctx.cx x.val, rowTop + 0.5⟩)
-      fb.blend x y col (if a > 1.0 then 1.0 else a)
+    -- Fully covered runs of a solid paint are one span. Partial coverage stays
+    -- per pixel, because the weight changes.
+    -- `fuel` is the number of iterations left. Each one advances `x`, and
+    -- there are at most `c.x1 - c.x0` columns, so the match is structural.
+    let rec paintRow (fuel x : Nat) (fb : FrameBuffer w h) : FrameBuffer w h :=
+      match fuel with
+      | 0 => fb
+      | fuel + 1 =>
+        if hx : x < c.x1 then
+          let a := acc[x - c.x0]!
+          if a <= 0.0 then
+            paintRow fuel (x + 1) fb
+          else if a > 1.0 then
+            match solid with
+            | some col =>
+              let rec runEnd (z : Nat) : Nat :=
+                if h : z < c.x1 then
+                  if acc[z - c.x0]! > 1.0 then runEnd (z + 1) else z
+                else z
+              termination_by c.x1 - z
+              let stop := runEnd (x + 1)
+              paintRow fuel stop (fb.blendSpan y x stop col)
+            | none =>
+              let col := paint.colorAt (inv.apply ⟨ctx.cx x, rowTop + 0.5⟩)
+              paintRow fuel (x + 1) (fb.blend ⟨x, Nat.lt_of_lt_of_le hx c.hx⟩ y col 1.0)
+          else
+            let col := match solid with
+              | some col => col
+              | none => paint.colorAt (inv.apply ⟨ctx.cx x, rowTop + 0.5⟩)
+            paintRow fuel (x + 1) (fb.blend ⟨x, Nat.lt_of_lt_of_le hx c.hx⟩ y col a)
+        else fb
+    return paintRow (c.x1 - c.x0) c.x0 fb
 
 /-- Stroke polylines (device space) with round joins and caps. -/
 def strokePolys (fb : FrameBuffer w h) (ctx : Ctx w h) (polys : Array Path.Poly)
