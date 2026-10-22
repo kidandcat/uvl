@@ -28,6 +28,33 @@ theorem ByteArray.size_uset (a : ByteArray) (i : USize) (v : UInt8) (h : i.toNat
 private theorem four_lt_usize : 4 < USize.size :=
   Nat.lt_of_lt_of_le (by decide : (4 : Nat) < 2 ^ 32) USize.le_size
 
+/-- `n < USize.size` without building `2^numBits`. On 64-bit that power is not a
+64-bit word, and the bare-metal runtime rejects it. `n >>> 32 < 2^32` is `n < 2^64`. -/
+private def fitsUSize (n : Nat) : Bool :=
+  if System.Platform.numBits == 64 then n >>> 32 < 4294967296 else n < 4294967296
+
+private theorem two32 : 2 ^ 32 = 4294967296 := by decide
+
+private theorem fitsUSize_lt (n : Nat) (h : fitsUSize n = true) : n < USize.size := by
+  rw [USize.size_eq_two_pow]
+  unfold fitsUSize at h
+  cases System.Platform.numBits_eq with
+  | inl hbits =>
+    simp only [hbits] at h
+    have hne : ((32 == 64) = false) := by decide
+    simp only [hne] at h
+    have hn : n < 4294967296 := of_decide_eq_true h
+    simpa [two32, hbits] using hn
+  | inr hbits =>
+    simp only [hbits] at h
+    have heq : ((64 == 64) = true) := by decide
+    simp only [heq, ite_true] at h
+    have hq : n >>> 32 < 4294967296 := of_decide_eq_true h
+    rw [Nat.shiftRight_eq_div_pow, ← two32] at hq
+    have hmul : n < 2 ^ 32 * 2 ^ 32 := (Nat.div_lt_iff_lt_mul (by decide)).mp hq
+    have hpow : 2 ^ 32 * 2 ^ 32 = 2 ^ 64 := by rw [← Nat.pow_add]
+    simpa [hbits, hpow] using hmul
+
 private theorem usize_toNat_add (i : USize) (n : Nat) (hn : n < USize.size)
     (h : i.toNat + n < USize.size) : (i + OfNat.ofNat n).toNat = i.toNat + n := by
   rw [USize.toNat_add, USize.toNat_ofNat_of_lt hn, Nat.mod_eq_of_lt h]
@@ -208,7 +235,8 @@ def blitSpan (fb : FrameBuffer w h) (y : Fin h) (x0 x1 : Nat) (p : RGBA8) : Fram
         _ = w * h * 4 := by rw [Nat.mul_comm h w]
     -- one comparison per span, not per byte; the slow arm is unreachable for
     -- any framebuffer that fits in the address space
-    if husize : nbytes < USize.size then
+    if hfitB : fitsUSize nbytes then
+      have husize : nbytes < USize.size := fitsUSize_lt nbytes hfitB
       let rec go (i : USize) (k : Nat) (data : ByteArray) (hsize : data.size = nbytes)
           (hi : i.toNat = off + k * 4) : { b : ByteArray // b.size = nbytes } :=
         if hlt : k < span then
@@ -280,7 +308,8 @@ def blendSpan (fb : FrameBuffer w h) (y : Fin h) (x0 x1 : Nat) (c : Color) : Fra
       calc
         (y.val * w + x1) * 4 ≤ (h * w) * 4 := Nat.mul_le_mul_right 4 hrow
         _ = w * h * 4 := by rw [Nat.mul_comm h w]
-    if husize : nbytes < USize.size then
+    if hfitB : fitsUSize nbytes then
+      have husize : nbytes < USize.size := fitsUSize_lt nbytes hfitB
       let rec go (i : USize) (k : Nat) (data : ByteArray) (hsize : data.size = nbytes)
           (hi : i.toNat = off + k * 4) : { b : ByteArray // b.size = nbytes } :=
         if hlt : k < span then

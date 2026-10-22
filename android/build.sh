@@ -186,6 +186,7 @@ for ABI in $ABIS; do
   $CC $CFLAGS -I"$INC" -I"$GLUE" -DUVL_ANDROID_INIT="$INIT_SYM" -c android/android_shell.c -o "$APP/android_shell.o"
   $CC $CFLAGS -I"$GLUE" -c "$GLUE/android_native_app_glue.c" -o "$APP/android_native_app_glue.o"
   $CC $CFLAGS -I"$INC" -c android/lean_stubs.c -o "$APP/lean_stubs.o"
+  $CC $CFLAGS -c UVL/Render/glyph_table.c -o "$APP/glyph_table.o"
 
   # --- 4. link, with stubs for compile-time-only symbols -------------------------
   # Elaborators and `bv_decide` reflection terms reference `Lean`/`Std`, which

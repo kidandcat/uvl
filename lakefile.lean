@@ -5,8 +5,17 @@ package uvl where
   leanOptions := #[⟨`autoImplicit, false⟩, ⟨`relaxedAutoImplicit, false⟩]
   moreLeancArgs := #["-O3"]
 
+target glyph_table.o pkg : System.FilePath := do
+  let oFile := pkg.buildDir / "native" / "glyph_table.o"
+  let srcJob ← inputTextFile <| pkg.dir / "UVL" / "Render" / "glyph_table.c"
+  buildO oFile srcJob #[] #["-fPIC", "-O2"] "cc"
+
 @[default_target]
-lean_lib UVL
+lean_lib UVL where
+  moreLinkObjs := #[glyph_table.o]
+  -- The interpreter evaluates `@[extern] glyphRowC` while elaborating `#guard`s.
+  -- Precompiled modules load the shared library that defines that symbol.
+  precompileModules := true
 
 lean_lib Tests where
   globs := #[.one `Tests.PngDecode, .one `Tests.Tile, .one `Tests.Damage, .one `Tests.GPU, .one `Tests.Text, .one `Tests.Controls, .one `Tests.Html]

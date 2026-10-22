@@ -194,8 +194,8 @@ def op {w h : Nat} (ctx : Ctx w h) (b : Batch) (o : RenderOp) : Batch :=
     let sc := scale * ctx.m.scaleFactor
     let chars := s.toList.toArray
     (Array.range chars.size).foldl (init := b) fun b k =>
-      let g := Font.glyph chars[k]!
-      let row (j : Nat) : Nat := g[j]?.getD 0
+      let ch := chars[k]!
+      let row (j : Nat) : Nat := Font.glyphRow ch j
       let lo := row 0 + row 1 * 32 + row 2 * 1024 + row 3 * 32768
       let hi := row 4 + row 5 * 32 + row 6 * 1024
       if lo == 0 && hi == 0 then b else

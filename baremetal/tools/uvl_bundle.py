@@ -37,6 +37,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BAREMETAL = os.path.dirname(HERE)
+ROOT = os.path.dirname(BAREMETAL)
+GLYPH_C = os.path.join(ROOT, 'UVL', 'Render', 'glyph_table.c')
 
 INIT_FN = re.compile(
     r'(?:lean_object\* (?:runtime_|meta_)?initialize_\w+\(uint8_t builtin\);\n)*'
@@ -266,7 +268,7 @@ def main():
         exe = os.path.join(work, 'uvl-host')
         mapf = os.path.join(work, 'link.map')
         objs = [os.path.join(work, 'obj', cident(m) + '.o') for m in order]
-        r = subprocess.run([args.cc] + cflags + host_heap + [harness, init_c] + rt + objs +
+        r = subprocess.run([args.cc] + cflags + host_heap + [harness, init_c, GLYPH_C] + rt + objs +
                            ['-o', exe, '-lm', '-Wl,--gc-sections', '-Wl,--print-gc-sections', f'-Wl,-Map={mapf}'],
                            capture_output=True, text=True)
         if r.returncode != 0:
@@ -311,6 +313,7 @@ def main():
     for m in used:
         shutil.copy(os.path.join(work, 'src', cident(m) + '.c'), os.path.join(out, 'src'))
     shutil.copy(os.path.join(work, 'uvl_init.c'), os.path.join(out, 'src'))
+    shutil.copy(GLYPH_C, os.path.join(out, 'src', 'glyph_table.c'))
     shutil.copytree(os.path.join(BAREMETAL, 'rt'), os.path.join(out, 'rt'))
     shutil.copytree(os.path.join(BAREMETAL, 'include'), os.path.join(out, 'include'))
     for h in ('lean.h', 'version.h'):
