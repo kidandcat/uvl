@@ -113,13 +113,24 @@ def union (a b : Window) : Window :=
 def meets (a b : Window) : Bool :=
   a.x ≤ b.x + b.w && b.x ≤ a.x + a.w && a.y ≤ b.y + b.h && b.y ≤ a.y + a.h
 
+/-- Clamp a device coordinate into `0 .. n`. -/
+def clampPx (v : Float) (n : Nat) : Nat :=
+  if v <= 0 then 0 else Min.min n v.toUInt64.toNat
+
+theorem clampPx_le (v : Float) (n : Nat) : clampPx v n ≤ n := by
+  unfold clampPx
+  split
+  · exact Nat.zero_le n
+  · exact Nat.min_le_left n _
+
+/-- A window from inclusive-exclusive edges, or `none` when the rectangle is empty. -/
+def windowOf (x0 y0 x1 y1 : Nat) : Option Window :=
+  if _ : x0 < x1 ∧ y0 < y1 then some ⟨x0, y0, x1 - x0, y1 - y0⟩ else none
+
 /-- The pixels a device rectangle touches, clamped to a `w × h` frame. -/
 def ofRect (w h : Nat) (r : Rect) : Option Window :=
-  let px (v : Float) (n : Nat) : Nat :=
-    if v <= 0 then 0 else Min.min n v.toUInt64.toNat
-  let x0 := px r.x.floor w; let y0 := px r.y.floor h
-  let x1 := px (r.x + r.w).ceil w; let y1 := px (r.y + r.h).ceil h
-  if x1 > x0 && y1 > y0 then some ⟨x0, y0, x1 - x0, y1 - y0⟩ else none
+  windowOf (clampPx r.x.floor w) (clampPx r.y.floor h)
+    (clampPx (r.x + r.w).ceil w) (clampPx (r.y + r.h).ceil h)
 
 /-- One left-to-right pass: union a window into an earlier one when they meet. -/
 def mergePass (ws : Array Window) : Array Window :=
@@ -128,18 +139,110 @@ def mergePass (ws : Array Window) : Array Window :=
     | some i => acc.set! i (acc[i]!.union r)
     | none => acc.push r
 
-/-- Merge windows until a pass no longer shrinks the list.
+-- `coalesceStep` calls `coalesceGo` at the same fuel and a lower phase, and
+-- `coalesceGo` calls it at `fuel - 1`. `mergePass` is an argument, so it runs once.
+mutual
 
-A pass never grows the list (each window is either pushed or unioned), so it
-shrinks at most `ws.size` times. `fuel` is that bound; the recursion is
-structural on it. -/
+def coalesceStep (ws step : Array Window) (fuel : Nat) : Array Window :=
+  if step.size < ws.size then coalesceGo step fuel else step
+termination_by (fuel, 1)
+
+/-- Merge windows until a pass no longer shrinks the list. `fuel` bounds the
+number of shrinks: a pass never grows the list, so `ws.size` shrinks suffice. -/
+def coalesceGo (ws : Array Window) : Nat → Array Window
+  | 0 => ws
+  | fuel + 1 => coalesceStep ws (mergePass ws) fuel
+termination_by fuel => (fuel, 0)
+
+end
+
+/-- Merge windows until a pass no longer shrinks the list. -/
 def coalesce (ws : Array Window) : Array Window :=
-  let rec go (ws : Array Window) : Nat → Array Window
-    | 0 => ws
-    | fuel + 1 =>
-      let step := mergePass ws
-      if step.size < ws.size then go step fuel else step
-  go ws ws.size
+  coalesceGo ws ws.size
+
+/-- `x + w` and `y + h` stay inside a `frameW × frameH` frame. -/
+def inside (frameW frameH : Nat) (win : Window) : Prop :=
+  win.x + win.w ≤ frameW ∧ win.y + win.h ≤ frameH
+
+theorem union_inside {frameW frameH : Nat} {a b : Window}
+    (ha : a.inside frameW frameH) (hb : b.inside frameW frameH) :
+    (a.union b).inside frameW frameH := by
+  unfold inside at *
+  have hx : (a.union b).x + (a.union b).w = Max.max (a.x + a.w) (b.x + b.w) := by
+    unfold union
+    show Min.min a.x b.x + (Max.max (a.x + a.w) (b.x + b.w) - Min.min a.x b.x)
+        = Max.max (a.x + a.w) (b.x + b.w)
+    exact Nat.add_sub_of_le <| Nat.le_trans (Nat.min_le_left a.x b.x)
+      (Nat.le_trans (Nat.le_add_right a.x a.w) (Nat.le_max_left _ _))
+  have hy : (a.union b).y + (a.union b).h = Max.max (a.y + a.h) (b.y + b.h) := by
+    unfold union
+    show Min.min a.y b.y + (Max.max (a.y + a.h) (b.y + b.h) - Min.min a.y b.y)
+        = Max.max (a.y + a.h) (b.y + b.h)
+    exact Nat.add_sub_of_le <| Nat.le_trans (Nat.min_le_left a.y b.y)
+      (Nat.le_trans (Nat.le_add_right a.y a.h) (Nat.le_max_left _ _))
+  rw [hx, hy]
+  exact ⟨Nat.max_le.mpr ⟨ha.1, hb.1⟩, Nat.max_le.mpr ⟨ha.2, hb.2⟩⟩
+
+theorem windowOf_inside {w h x0 y0 x1 y1 : Nat} {win : Window}
+    (_hx0 : x0 ≤ w) (_hy0 : y0 ≤ h) (hx1 : x1 ≤ w) (hy1 : y1 ≤ h)
+    (he : windowOf x0 y0 x1 y1 = some win) : win.inside w h := by
+  unfold windowOf at he
+  split at he
+  · rename_i hxy
+    cases he
+    rcases hxy with ⟨hx, hy⟩
+    change x0 + (x1 - x0) ≤ w ∧ y0 + (y1 - y0) ≤ h
+    exact ⟨Nat.le_trans (Nat.le_of_eq (Nat.add_sub_of_le (Nat.le_of_lt hx))) hx1,
+      Nat.le_trans (Nat.le_of_eq (Nat.add_sub_of_le (Nat.le_of_lt hy))) hy1⟩
+  · cases he
+
+theorem ofRect_inside (w h : Nat) (r : Rect) (win : Window)
+    (he : ofRect w h r = some win) : win.inside w h := by
+  unfold ofRect at he
+  exact windowOf_inside (clampPx_le _ _) (clampPx_le _ _) (clampPx_le _ _) (clampPx_le _ _) he
+
+private theorem mergePass_inside {frameW frameH : Nat} {ws : Array Window}
+    (hw : ∀ win ∈ ws, win.inside frameW frameH) :
+    ∀ win ∈ mergePass ws, win.inside frameW frameH := by
+  unfold mergePass
+  refine Array.foldl_induction
+      (motive := fun (_ : Nat) (acc : Array Window) =>
+        ∀ win : Window, win ∈ acc → win.inside frameW frameH)
+      (h0 := by intro win h; simp at h) (hf := ?_)
+  intro i acc hacc win hmem
+  have hr : (ws[i]).inside frameW frameH :=
+    hw _ (Array.mem_iff_getElem.mpr ⟨i.1, i.isLt, rfl⟩)
+  cases hfind : acc.findIdx? (·.meets ws[i]) with
+  | none =>
+    simp only [hfind, Array.mem_push] at hmem
+    rcases hmem with hmem | hmem
+    · exact hacc _ hmem
+    · simpa [hmem] using hr
+  | some j =>
+    have hj : j < acc.size := (Array.findIdx?_eq_some_iff_findIdx_eq.mp hfind).1
+    simp only [hfind, Array.set!_eq_setIfInBounds, Array.setIfInBounds_def, hj] at hmem
+    rcases Array.mem_or_eq_of_mem_set (w := hj) hmem with hmem | hmem
+    · exact hacc _ hmem
+    · rw [hmem, getElem!_pos acc j hj]
+      exact union_inside (hacc _ (Array.mem_iff_getElem.mpr ⟨j, hj, rfl⟩)) hr
+
+private theorem coalesceGo_inside {frameW frameH fuel : Nat} {ws : Array Window}
+    (hw : ∀ win ∈ ws, win.inside frameW frameH) :
+    ∀ win ∈ coalesceGo ws fuel, win.inside frameW frameH := by
+  induction fuel generalizing ws with
+  | zero =>
+    simpa [coalesceGo] using hw
+  | succ fuel ih =>
+    intro win hmem
+    unfold coalesceGo coalesceStep at hmem
+    split at hmem
+    · exact ih (mergePass_inside hw) _ hmem
+    · exact mergePass_inside hw _ hmem
+
+theorem coalesce_inside {frameW frameH : Nat} {ws : Array Window}
+    (hw : ∀ win ∈ ws, win.inside frameW frameH) :
+    ∀ win ∈ coalesce ws, win.inside frameW frameH := by
+  simpa [coalesce] using coalesceGo_inside (fuel := ws.size) hw
 
 end Window
 
@@ -155,6 +258,44 @@ def damage (w h : Nat) (old new : Array RenderOp) : Array Window :=
   else match ws[0]? with
     | some r => #[ws.foldl Window.union r]
     | none => #[]
+
+/-- Every window reported by `damage` lies inside the frame. -/
+theorem damage_inside (w h : Nat) (old new : Array RenderOp) :
+    ∀ win ∈ damage w h old new, win.inside w h := by
+  intro win hmem
+  simp only [damage] at hmem
+  generalize hwsEq :
+    Window.coalesce ((RenderOp.diffOps {} #[] old new).filterMap (Window.ofRect w h)) = ws at hmem
+  have hmap : ∀ win ∈ (RenderOp.diffOps {} #[] old new).filterMap (Window.ofRect w h),
+      win.inside w h := by
+    intro win hm
+    rcases Array.mem_filterMap.mp hm with ⟨r, _, hr⟩
+    exact Window.ofRect_inside w h r win hr
+  have hws : ∀ win ∈ ws, win.inside w h := hwsEq ▸ Window.coalesce_inside hmap
+  split at hmem
+  · exact hws _ hmem
+  · split at hmem
+    · rename_i r hr
+      have hlt : 0 < ws.size := by
+        cases hsz : ws.size with
+        | zero =>
+          have : ¬ 0 < ws.size := by simp [hsz]
+          simp [getElem?_neg ws 0 this] at hr
+        | succ _ => exact Nat.zero_lt_succ _
+      have heq : ws[0] = r :=
+        Option.some.inj ((getElem?_pos ws 0 hlt).symm.trans hr)
+      have hrIn : r.inside w h := by
+        rw [← heq]
+        exact hws _ (Array.mem_iff_getElem.mpr ⟨0, hlt, rfl⟩)
+      have hfold : (ws.foldl Window.union r).inside w h :=
+        Array.foldl_induction (motive := fun (_ : Nat) (acc : Window) => acc.inside w h)
+          (h0 := hrIn) (hf := by
+            intro i acc hacc
+            exact Window.union_inside hacc
+              (hws _ (Array.mem_iff_getElem.mpr ⟨i.1, i.isLt, rfl⟩)))
+      simp only [Array.mem_def, List.mem_singleton] at hmem
+      simpa [hmem] using hfold
+    · simp [Array.mem_def] at hmem
 
 /-- A rendered frame remembered together with the scene it shows. -/
 structure Frame where
