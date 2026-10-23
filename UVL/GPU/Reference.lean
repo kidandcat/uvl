@@ -20,9 +20,10 @@ def referenceRender (w h : Nat) (ops : Array RenderOp) (bg : Color := Color.whit
     FrameBuffer w h := Id.run do
   let b := Batch.build w h ops
   let atlas := b.atlasData
+  let tex := b.texData
   let buffers := fun n =>
     if n == "prims" then b.prims else if n == "data" then b.data
-    else if n == "atlas" then atlas else .empty
+    else if n == "atlas" then atlas else if n == "tex" then tex else .empty
   let mut fb := FrameBuffer.new w h bg
   for i in [0:b.count] do
     let base := i * primStride

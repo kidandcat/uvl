@@ -64,11 +64,19 @@ the SDL and browser shells do:
   screen divided by the display density (1080×2400 at 420 dpi becomes 411×914) and the
   compositor scales it to the screen. Only the damaged parts of a frame are re-rasterized
   (`uvl_host_present`); the result is copied into the window.
+- **GPU.** Apps that import `UVLGPU` (like `Examples.SpritesAndroid`) are built with the
+  WebGPU renderer: `build.sh` fetches a prebuilt wgpu-native for Android and links
+  [`native/gpu_shell.c`](../native/gpu_shell.c), and frames are lowered in Lean and drawn on the
+  window's Vulkan surface (`uvl_host_gpu_present`), as on desktop and in the browser. If the
+  GPU cannot start the shell falls back to the CPU; `adb shell setprop debug.uvl.cpu 1`
+  forces it, `debug.uvl.present immediate` asks for a present mode without vsync.
 - **Insets.** The app gets the activity's content rect, the part of the window not covered by
   the status bar, the navigation bar or the keyboard, and is relaid out when it changes. The
   rest of the window is painted with the app's background.
-- **Touch.** The first finger is the pointer: down, move and up become pointer events, and
-  lifting it also sends `pointer leave`, so nothing stays hovered.
+- **Touch.** Every finger sends touch events (`touchDown`/`touchMove`/`touchUp` with its id),
+  which `UVL.Game.Gestures` turns into pan and pinch-zoom. The first finger is also the
+  pointer: down, move and up become pointer events, and lifting it also sends
+  `pointer leave`, so nothing stays hovered.
 - **Keyboard.** The on-screen keyboard is shown while a text input has the focus
   (`uvl_host_text_focus`), through `InputMethodManager` over JNI. Characters are decoded with
   `KeyEvent.getUnicodeChar`; Backspace, Enter, arrows and Ctrl shortcuts map to UVL keys. Back
@@ -76,6 +84,9 @@ the SDL and browser shells do:
 - **Idle.** The loop blocks on the looper unless the app is animating
   (`uvl_host_animating`: a tween, a blinking caret, a hover fade), so an idle app uses no CPU.
 - **Stack.** Lean code runs on its own thread with a 64 MB stack instead of the glue's 1 MB.
+- **Measuring.** With `adb shell setprop debug.uvl.stats 1` (read at launch) the shell logs the
+  frame rate and the time per frame in `step` and `present` every two seconds
+  (`adb logcat -s uvl`).
 
 ## Testing
 
@@ -91,8 +102,7 @@ android/smoke.sh                     # with an emulator running or a phone conne
 
 ## Not yet
 
-- GPU rendering (the WGSL renderer through wgpu-native on Vulkan) is not wired up; frames are
-  rasterized on the CPU.
-- One pointer only: no multi-touch gestures.
+- GPU rendering is opt-in per app (import `UVLGPU`) and renders at density-independent size,
+  like the CPU path; it has only run on the emulator's software Vulkan (SwiftShader).
 - No clipboard integration and no IME composition (predictive text arrives as key events
   only, which is what most keyboards send to a `NativeActivity`).

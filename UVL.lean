@@ -16,6 +16,8 @@ import UVL.Text.TrueType
 import UVL.Text.Layout
 import UVL.Output.Deflate
 import UVL.Output.Image
+import UVL.Output.Inflate
+import UVL.Output.PngDecode
 import UVL.Layout.Constraints
 import UVL.Layout.Placed
 import UVL.Layout.Widget
@@ -29,5 +31,7 @@ import UVL.UI.Tween
 import UVL.App.Event
 import UVL.App.Runtime
 import UVL.App.Host
+import UVL.Game.Camera
 import UVL.GPU.Reference
+import UVL.GPU.Instanced
 import UVL.BareMetal.Shell

@@ -16,7 +16,8 @@ color as the CPU rasterizer (`Render/Raster.lean`):
   (4 sub-scanlines, exact horizontal coverage) over the path's edges;
 * stroked paths: distance to the flattened polyline;
 * text: exact area coverage of the bitmap glyph cells;
-* MSDF glyphs: `MSDF.sample` on the atlas buffer (bilinear, median).
+* MSDF glyphs: `MSDF.sample` on the atlas buffer (bilinear, median);
+* sprites: box coverage and a texel (nearest or bilinear) of the texture buffer.
 
 Blending is the fixed-function `src-alpha, one-minus-src-alpha`, which is what
 `FrameBuffer.blend` computes over an opaque background.
@@ -36,12 +37,19 @@ def kindPathFill : Nat := 2
 def kindPathStroke : Nat := 3
 def kindGlyph : Nat := 4
 def kindMSDF : Nat := 5
+def kindSprite : Nat := 6
+/-- A run of hardware-sampled sprite instances (native hosts only; the uber
+kernels skip it, see `Batch.pushRun`). -/
+def kindSpriteRun : Nat := 64
 
 def prims : Buffer := ⟨"prims"⟩
 def data : Buffer := ⟨"data"⟩
 /-- MSDF atlas texels, `MSDF.cellFloats` per glyph at `glyph * cellFloats`. It
 persists across frames: hosts upload each glyph's cell once. -/
 def atlas : Buffer := ⟨"atlas"⟩
+/-- Sprite texture: RGBA8 texels packed little-endian in `u32`s (the texture's
+bytes as they are), row-major. Persists across frames like the atlas. -/
+def tex : Buffer := ⟨"tex"⟩
 
 def litN (n : Nat) : Expr .f32 := .litF n.toF
 
@@ -292,6 +300,67 @@ def msdfCoverageDef := Fn.def2 "msdf_coverage" .u32 .v2 .f32 fun base q => do
   let px ← let_ (size * field base 14)
   ret (clamp (m * px + 0.5) 0 1)
 
+/-- Texel `(x, y)` of the texture at `tex[off]`, `w` texels wide, in `[0, 1]`
+(`Texture.chan`). -/
+def texelDef := Fn.def4 "texel" .u32 .u32 .f32 .f32 .v4 fun off w tx ty => do
+  let v ← let_ (loadU tex (off + toU ty * w + toU tx))
+  ret (vec4 (toF (band v 255) / 255) (toF (band (shr v 8) 255) / 255)
+    (toF (band (shr v 16) 255) / 255) (toF (shr v 24) / 255))
+
+def texel := texelDef.2
+
+/-- `Texture.clampTexel`. -/
+def clampTexel (v lo n : Expr .f32) : Expr .f32 := Expr.max lo (Expr.min v (lo + n - 1))
+
+def premul (c : Expr .v4) : Expr .v4 :=
+  vec4 (comp c 0 * comp c 3) (comp c 1 * comp c 3) (comp c 2 * comp c 3) (comp c 3)
+
+/-- `Raster.drawSprites` for one sprite: box coverage, then `Texture.sampleNearest`
+or `Texture.sampleLinear`. Slots: 16–19 box center and half size, 20–23 the
+local → texel map, 24–27 source rectangle, 28 texture width, 29 smooth,
+30 opacity, 31 texture offset (texels). -/
+def spriteColorDef := Fn.def2 "sprite_color" .u32 .v2 .v4 fun base q => do
+  let d ← let_ (sdRoundedBox q (vec2 (field base 16) (field base 17))
+    (vec2 (field base 18) (field base 19)) (vec4 0 0 0 0))
+  let cov ← let_ (coverage (d * field base 14))
+  if_ (cov <=. 0) (ret (vec4 0 0 0 0))
+  let u ← let_ ((x q - field base 20) * field base 22 + field base 24)
+  let v ← let_ ((y q - field base 21) * field base 23 + field base 25)
+  let sx ← let_ (field base 24)
+  let sy ← let_ (field base 25)
+  let sw ← let_ (field base 26)
+  let sh ← let_ (field base 27)
+  let w ← let_ (toU (field base 28))
+  let off ← let_ (toU (field base 31))
+  let col ← var_ (vec4 0 0 0 0)
+  if_ (field base 29 ==. 0)
+    (col.set (texel off w (clampTexel (floor u) sx sw) (clampTexel (floor v) sy sh)))
+    (do
+      let tx ← let_ (u - 0.5)
+      let ty ← let_ (v - 0.5)
+      let fx ← let_ (floor tx)
+      let fy ← let_ (floor ty)
+      let ax ← let_ (tx - fx)
+      let ay ← let_ (ty - fy)
+      let x0 ← let_ (clampTexel fx sx sw)
+      let x1 ← let_ (clampTexel (fx + 1) sx sw)
+      let y0 ← let_ (clampTexel fy sy sh)
+      let y1 ← let_ (clampTexel (fy + 1) sy sh)
+      let p00 ← let_ (premul (texel off w x0 y0))
+      let p10 ← let_ (premul (texel off w x1 y0))
+      let p01 ← let_ (premul (texel off w x0 y1))
+      let p11 ← let_ (premul (texel off w x1 y1))
+      let top ← let_ (mix4 p00 p10 ax)
+      let bot ← let_ (mix4 p01 p11 ax)
+      let c ← let_ (mix4 top bot ay)
+      let a ← let_ (comp c 3)
+      col.set (select (a <=. 0) (vec4 0 0 0 0)
+        (vec4 (comp c 0 / a) (comp c 1 / a) (comp c 2 / a) a)))
+  let c := col.get
+  ret (vec4 (comp c 0) (comp c 1) (comp c 2) (comp c 3 * field base 30 * cov))
+
+def spriteColor := spriteColorDef.2
+
 def shapeCoverage := shapeCoverageDef.2
 def shadowCoverage := shadowCoverageDef.2
 def pathFillCoverage := pathFillCoverageDef.2
@@ -315,6 +384,13 @@ def shadeWith (name : String)
     let col ← let_ (paintAt base q)
     ret (vec4 (comp col 0) (comp col 1) (comp col 2) (comp col 3 * c))
 
+/-- Sprites take their color from the texture instead of a paint. -/
+def shadeSprite := Fn.def2 "shade_sprite" .u32 .v2 .v4 fun i p => do
+  let base ← let_ (i * .litU primStride.toUInt32)
+  let q ← let_ (vec2 (field base 8 * x p + field base 10 * y p + field base 12)
+    (field base 9 * x p + field base 11 * y p + field base 13))
+  ret (spriteColor base q)
+
 /-- One shading function per primitive kind, with its WGSL entry point name.
 Each kind gets its own render pipeline, so a fragment only runs the code of
 its kind (no divergent branches over all kinds). -/
@@ -324,7 +400,8 @@ def kindShaders : List (Nat × String × (FnDef × (Expr .u32 → Expr .v2 → E
    (kindPathFill, "path_fill", shadeWith "shade_path_fill" fun b _ _ px py => pathFillCoverage b px py),
    (kindPathStroke, "path_stroke", shadeWith "shade_path_stroke" fun b _ p _ _ => pathStrokeCoverage b p),
    (kindGlyph, "glyph", shadeWith "shade_glyph" fun b _ _ px py => glyphCoverage b px py),
-   (kindMSDF, "msdf", shadeWith "shade_msdf" fun b q _ _ _ => msdfCoverage b q)]
+   (kindMSDF, "msdf", shadeWith "shade_msdf" fun b q _ _ _ => msdfCoverage b q),
+   (kindSprite, "sprite", shadeSprite)]
 
 /-- Any primitive: dispatch on its kind (used by the reference renderer). -/
 def shadeDef := Fn.def2 "shade" .u32 .v2 .v4 fun i p => do
@@ -337,7 +414,8 @@ def shadeDef := Fn.def2 "shade" .u32 .v2 .v4 fun i p => do
 def functions : List FnDef :=
   [sdCircleDef.1, sdRoundedBoxDef.1, sdSegmentDef.1, sdEllipseDef.1, erfDef.1, overlapDef.1,
    sampleStopsDef.1, paintAtDef.1, shapeCoverageDef.1, shadowCoverageDef.1,
-   pathFillCoverageDef.1, pathStrokeCoverageDef.1, glyphCoverageDef.1, msdfCoverageDef.1] ++
+   pathFillCoverageDef.1, pathStrokeCoverageDef.1, glyphCoverageDef.1, msdfCoverageDef.1,
+   texelDef.1, spriteColorDef.1] ++
     kindShaders.map (·.2.2.1) ++ [shadeDef.1]
 
 /-- Bindings and entry points around the generated functions. The vertex stage
@@ -349,6 +427,7 @@ def skeleton : String := "
 @group(0) @binding(1) var<storage, read> data : array<f32>;
 @group(0) @binding(2) var<uniform> screen : vec4f;
 @group(0) @binding(3) var<storage, read> atlas : array<f32>;
+@group(0) @binding(4) var<storage, read> tex : array<u32>;
 
 struct VOut {
   @builtin(position) pos : vec4f,

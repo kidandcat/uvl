@@ -42,6 +42,15 @@ inductive Event where
   /-- Wheel or trackpad scroll, in pixels; positive `dy` scrolls the content up
   (shows what is further down), like the browser's `deltaY`. -/
   | scroll (dx dy : Float)
+  /-- A finger touched a touch screen; `id` names the finger until it is
+  lifted. Shells also drive the pointer with the first finger, so widgets keep
+  working; these events are for multitouch gestures (`Game.Gestures`). -/
+  | touchDown (id : Nat) (x y : Float)
+  | touchMove (id : Nat) (x y : Float)
+  /-- The finger was lifted, or the touch was cancelled. -/
+  | touchUp (id : Nat) (x y : Float)
+  /-- Trackpad pinch: zoom by `scale` (above 1 zooms in) around `(x, y)`. -/
+  | pinch (scale x y : Float)
   | keyDown (key : Key)
   | keyUp (key : Key)
   | textInput (s : String)

@@ -90,6 +90,7 @@ def primTags (w h : Nat) (ops : Array RenderOp) : Array Nat := Id.run do
 def scenes : List Scene := [
   ⟨"primitives", 240, 160, scaledPrimitives, Color.white⟩,
   ⟨"hello", 320, 160, Examples.hello.toOps 320 160, Color.hex 0xECEFF1⟩,
+  ⟨"sprites", 240, 160, Examples.spriteScene, Color.white⟩,
   counterScene
 ]
 

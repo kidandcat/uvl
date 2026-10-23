@@ -18,7 +18,7 @@ platform only has to provide a *framebuffer* and a stream of events.
 | 6. Fonts | TrueType parser in Lean, embedded UVL Sans, kerning and wrapping, `label`/`paragraph`; MSDF atlas generated in Lean, persistent on the GPU, identical sampling on CPU and GPU | ✅ |
 | 7. Controls | Pointer capture, keyboard focus, wheel routing; slider, checkbox, text field, scroll view; incremental GPU uploads | ✅ |
 | 8. Animation and editing | Runtime clock, blinking caret, hover fade-in, `Tween` with easing curves; text selection (drag, double-click, Shift, Ctrl+A), word navigation, the system clipboard on web and desktop; multi-line `textArea` | ✅ |
-| Android | The same apps as a `NativeActivity` APK with no Java code: Lean runtime and `Init` cross-compiled with the NDK, touch, on-screen keyboard, density scaling and insets; tested on an emulator in CI; see [`android/`](android/README.md) | ✅ (CPU rendering) |
+| Android | The same apps as a `NativeActivity` APK with no Java code: Lean runtime and `Init` cross-compiled with the NDK, touch, on-screen keyboard, density scaling and insets, multi-touch; tested on an emulator in CI; GPU rendering through wgpu-native on Vulkan for apps that import `UVLGPU`; see [`android/`](android/README.md) | ✅ (GPU tried on the emulator only) |
 | Bare metal | Tiled rendering (RGB565 / 1-bit, identical to the full frame), C runtime without `libleanrt` tested on ARM Cortex-M3 (QEMU) and running on an ESP32 LilyGO T-Display; see [`baremetal/`](baremetal/README.md) | in progress |
 
 ## Quick start
@@ -32,6 +32,7 @@ lake exe uvl-bench      # rasterizer time per frame
 lake exe uvl-counter    # desktop app (needs SDL3; renders with wgpu-native)
 lake exe uvl-controls   # slider, checkboxes, text field, scroll view
 lake exe uvl-gpu-check  # GPU renderer vs CPU rasterizer, headless
+lake exe uvl-sprites    # tile map with 300 walking units: sprites, pan and pinch zoom
 web/build.sh            # browser app in web/dist (needs Emscripten)
 android/build.sh        # Android APK in android/dist (needs the NDK and SDK)
 ```
@@ -166,7 +167,8 @@ def app : App Model Msg where
   `UVL_RENDERER=cpu`, Lean rasterizes the frames (with partial redraw) and SDL presents them.
   The C shells ([native/sdl_shell.c](native/sdl_shell.c)) only translate events and move
   buffers; there is no UI logic in C. Frames are only redrawn when something changed, so an
-  idle UI costs nothing.
+  idle UI costs nothing. `UVL_STATS=1` prints the frame rate and where the time goes every
+  second (with `UVL_PRESENT=immediate`, or `UVL_VSYNC=0` on the CPU, past the refresh rate).
 * **Headless / tests:** `Runtime.simulate` feeds a script of events; the tests click around
   and compare the resulting frame with a golden image.
 

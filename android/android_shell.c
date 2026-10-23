@@ -15,6 +15,17 @@
  * The on-screen keyboard is shown while a text input has the focus
  * (`uvl_host_text_focus`); typed characters are decoded with the framework's
  * `KeyEvent.getUnicodeChar` through JNI.
+ *
+ * When the app imports UVLGPU, android/build.sh also links the WebGPU renderer
+ * (native/gpu_shell.c on wgpu-native) and frames are drawn on the window's
+ * Vulkan surface; the CPU rasterizer is the fallback when the GPU cannot start,
+ * or with `adb shell setprop debug.uvl.cpu 1`. `debug.uvl.present` (immediate,
+ * mailbox) selects the present mode like UVL_PRESENT on desktop.
+ *
+ * For measuring, `adb shell setprop debug.uvl.stats 1` (read at launch) makes
+ * the loop log the frame rate and the time per frame spent stepping the
+ * runtime (update, view, layout) and presenting (CPU: rasterize and copy;
+ * GPU: lower, upload and draw), every two seconds.
  */
 #include <android/configuration.h>
 #include <android/input.h>
@@ -29,7 +40,11 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/system_properties.h>
 #include <time.h>
+#ifdef UVL_ANDROID_GPU
+#include <webgpu/webgpu.h>
+#endif
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "uvl", __VA_ARGS__)
 
@@ -57,7 +72,8 @@ extern void lean_initialize_runtime_module(void);
 extern void lean_io_mark_end_initialization(void);
 
 enum { EV_MOVE = 1, EV_DOWN = 2, EV_UP = 3, EV_KEY_DOWN = 5, EV_KEY_UP = 6, EV_TEXT = 7,
-       EV_RESIZE = 8, EV_LEAVE = 10 };
+       EV_RESIZE = 8, EV_LEAVE = 10, EV_TOUCH_DOWN = 13, EV_TOUCH_MOVE = 14,
+       EV_TOUCH_UP = 15 };
 
 /* SDL keycodes, as UVL/App/Host.lean decodes them. */
 #define K_RIGHT 0x4000004F
@@ -229,9 +245,86 @@ static uint32_t background_rgba(void) {
   return px;
 }
 
+#ifdef UVL_ANDROID_GPU
+/* --- GPU (wgpu-native on Vulkan) ------------------------------------------- */
+
+int uvl_wgpu_init(const WGPUChainedStruct *surface_desc, const char *wgsl, const char *entries);
+int uvl_wgpu_set_surface(const WGPUChainedStruct *surface_desc);
+lean_object *uvl_gpu_adapter_name(lean_object *world);
+lean_object *uvl_host_gpu_shader(lean_object *unit);
+lean_object *uvl_host_gpu_entries(lean_object *unit);
+lean_object *uvl_host_gpu_present(lean_object *rt, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+lean_object *uvl_host_mark_clean(lean_object *rt);
+
+static int gpu_state;              /* 0: not started, 1: drawing, -1: CPU */
+static ANativeWindow *gpu_window;  /* the window the surface belongs to */
+
+/* Start the GPU renderer on the current window, or move it to a new one. */
+static int gpu_on(void) {
+  if (gpu_state < 0) return 0;
+  WGPUSurfaceSourceAndroidNativeWindow src = {
+    .chain = {.sType = WGPUSType_SurfaceSourceAndroidNativeWindow}, .window = g.app->window};
+  if (gpu_state == 0) {
+    char prop[PROP_VALUE_MAX] = "";
+    __system_property_get("debug.uvl.cpu", prop);
+    if (prop[0] && prop[0] != '0') {
+      gpu_state = -1;
+      LOG("renderer: CPU (debug.uvl.cpu)");
+      return 0;
+    }
+    prop[0] = 0;
+    __system_property_get("debug.uvl.present", prop);
+    if (prop[0]) setenv("UVL_PRESENT", prop, 1);
+    lean_object *wgsl = uvl_host_gpu_shader(lean_box(0)), *entries = uvl_host_gpu_entries(lean_box(0));
+    int ok = uvl_wgpu_init(&src.chain, lean_string_cstr(wgsl), lean_string_cstr(entries));
+    lean_dec_ref(wgsl);
+    lean_dec_ref(entries);
+    gpu_state = ok ? 1 : -1;
+    gpu_window = g.app->window;
+    if (!ok) {
+      LOG("renderer: CPU (the GPU renderer could not start)");
+      return 0;
+    }
+    lean_object *name = uvl_gpu_adapter_name(lean_box(0));
+    LOG("renderer: GPU on %s", lean_io_result_is_ok(name) ? lean_string_cstr(lean_io_result_get_value(name)) : "?");
+    lean_dec_ref(name);
+    return 1;
+  }
+  if (gpu_window != g.app->window) {
+    gpu_window = g.app->window;
+    if (!uvl_wgpu_set_surface(&src.chain)) {
+      LOG("renderer: CPU (no GPU surface for the new window)");
+      gpu_state = -1;
+      return 0;
+    }
+  }
+  return 1;
+}
+
+/* The window is going away: drop the surface (and its swapchain) first. */
+static void gpu_off(void) {
+  if (gpu_state > 0 && gpu_window) uvl_wgpu_set_surface(NULL);
+  gpu_window = NULL;
+}
+
+static void present_gpu(void) {
+  lean_inc(g.rt);
+  lean_object *res = uvl_host_gpu_present(g.rt, g.ox, g.oy, g.bw, g.bh);
+  if (!lean_io_result_is_ok(res)) lean_io_result_show_error(res);
+  lean_dec_ref(res);
+  g.rt = uvl_host_mark_clean(g.rt);
+}
+#endif
+
 /* Rasterize the frame (only the damaged parts change) and copy it out. The
  * window's buffers rotate, so the whole frame is copied each time. */
 static void present(void) {
+#ifdef UVL_ANDROID_GPU
+  if (gpu_on()) {
+    present_gpu();
+    return;
+  }
+#endif
   g.rt = uvl_host_present(g.rt);
   lean_inc(g.rt);
   lean_object *px = uvl_host_pixels(g.rt);
@@ -267,7 +360,25 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
   (void)app;
   if (!g.rt) return 0;
   if (AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_MOTION) {
-    int32_t action = AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK;
+    int32_t raw = AMotionEvent_getAction(ev);
+    int32_t action = raw & AMOTION_EVENT_ACTION_MASK;
+    size_t idx = (size_t)((raw & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
+                          AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
+    /* every finger, for multitouch gestures (Event.touchDown/Move/Up) */
+    size_t n = AMotionEvent_getPointerCount(ev);
+    for (size_t i = 0; i < n; i++) {
+      int kind;
+      if (action == AMOTION_EVENT_ACTION_MOVE) kind = EV_TOUCH_MOVE;
+      else if (action == AMOTION_EVENT_ACTION_CANCEL) kind = EV_TOUCH_UP;
+      else if (i != idx) continue;
+      else if (action == AMOTION_EVENT_ACTION_DOWN || action == AMOTION_EVENT_ACTION_POINTER_DOWN)
+        kind = EV_TOUCH_DOWN;
+      else if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_POINTER_UP)
+        kind = EV_TOUCH_UP;
+      else continue;
+      push(kind, AMotionEvent_getPointerId(ev, i), AMotionEvent_getX(ev, i) * g.sx - g.ox,
+           AMotionEvent_getY(ev, i) * g.sy - g.oy);
+    }
     /* only the first finger drives the pointer */
     double x = AMotionEvent_getX(ev, 0) * g.sx - g.ox, y = AMotionEvent_getY(ev, 0) * g.sy - g.oy;
     switch (action) {
@@ -347,6 +458,9 @@ static void on_cmd(struct android_app *app, int32_t cmd) {
     break;
   case APP_CMD_TERM_WINDOW:
     g.has_window = 0;
+#ifdef UVL_ANDROID_GPU
+    gpu_off();
+#endif
     break;
   case APP_CMD_GAINED_FOCUS:
   case APP_CMD_RESUME:
@@ -393,7 +507,11 @@ static void *run(void *arg) {
     LOG("Lean initialization failed");
     ANativeActivity_finish(app->activity);
   }
-  double last = now_ms();
+  char prop[PROP_VALUE_MAX] = "";
+  __system_property_get("debug.uvl.stats", prop);
+  int stats = prop[0] && prop[0] != '0';
+  double last = now_ms(), since = last, step_ms = 0, present_ms = 0;
+  int frames = 0;
   while (!app->destroyRequested) {
     int animating = 0;
     if (g.rt) {
@@ -401,7 +519,13 @@ static void *run(void *arg) {
       animating = uvl_host_animating(g.rt);
     }
     int active = g.has_window && g.visible;
-    int timeout = (active && (animating || g.nevents)) ? 16 : -1;
+    /* animating: wait what is left of a 16 ms frame since the last step (the
+     * work of a frame counts towards it) */
+    int timeout = -1;
+    if (active && (animating || g.nevents)) {
+      double left = last + 16 - now_ms();
+      timeout = left <= 0 ? 0 : left >= 16 ? 16 : (int)left;
+    }
     struct android_poll_source *src = NULL;
     int id;
     while ((id = ALooper_pollOnce(timeout, NULL, NULL, (void **)&src)) >= 0 || id == ALOOPER_POLL_CALLBACK) {
@@ -418,6 +542,8 @@ static void *run(void *arg) {
     memcpy(lean_float_array_cptr(raw), g.events, sizeof(double) * 5 * g.nevents);
     g.nevents = 0;
     g.rt = uvl_host_step(g.rt, raw, dt > 100 ? 100 : dt);
+    double t1 = now_ms();
+    step_ms += t1 - t;
     lean_inc(g.rt);
     if (uvl_host_quit(g.rt)) {
       ANativeActivity_finish(app->activity);
@@ -427,7 +553,20 @@ static void *run(void *arg) {
     set_keyboard(uvl_host_text_focus(g.rt));
     if (!g.has_window) continue;
     lean_inc(g.rt);
-    if (uvl_host_dirty(g.rt)) present();
+    if (uvl_host_dirty(g.rt)) {
+      present();
+      frames++;
+    }
+    double t2 = now_ms();
+    present_ms += t2 - t1;
+    if (stats && t2 - since >= 2000) {
+      if (frames)
+        LOG("stats: %.1f fps | per frame: step %.2f ms, present %.2f ms", frames * 1000 / (t2 - since),
+            step_ms / frames, present_ms / frames);
+      since = t2;
+      step_ms = present_ms = 0;
+      frames = 0;
+    }
   }
   set_keyboard(0);
   g.has_window = 0;
