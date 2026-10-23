@@ -35,6 +35,10 @@ opaque atlasReset (floats : UInt32) : IO Unit
 @[extern "uvl_gpu_atlas_write"]
 opaque atlasWrite (offset : UInt32) (texels : @& FloatArray) : IO Unit
 
+/-- Replace the sprite texture buffer by these RGBA8 texels. -/
+@[extern "uvl_gpu_texture_upload"]
+opaque textureUpload (pixels : @& ByteArray) : IO Unit
+
 /-- Name of the GPU in use. -/
 @[extern "uvl_gpu_adapter_name"]
 opaque adapterName : IO String
@@ -62,20 +66,59 @@ def syncAtlas (b : GPU.Batch) : IO Unit := do
       up := up.set! g true
   atlasState.set (a.id + 1, up)
 
+/-- The sprite texture on the GPU: its id plus one, 0 for none. -/
+initialize textureState : IO.Ref Nat ← IO.mkRef 0
+
+/-- Upload the batch's sprite texture unless it is already on the GPU. -/
+def syncTexture (b : GPU.Batch) : IO Unit := do
+  let some t := b.texture | return
+  if (← textureState.get) != t.id + 1 then
+    textureUpload t.pixels
+    textureState.set (t.id + 1)
+
 /-- The arrays of the previous frame, now on the GPU: only what changed since
 is written (`Batch.changedRanges`). -/
 initialize lastFrame : IO.Ref (Option (FloatArray × FloatArray)) ← IO.mkRef none
 
-/-- Lower a `w × h` scene and draw it on the GPU. -/
-def draw (w h : Nat) (ops : Array RenderOp) (bg : Color) (readback : Bool := false) :
+/-- Draw a lowered `w × h` scene on the GPU. -/
+def drawBatch (b : GPU.Batch) (w h : Nat) (bg : Color) (readback : Bool := false) :
     IO ByteArray := do
-  let b := GPU.Batch.build w h ops
   syncAtlas b
+  syncTexture b
   let (pr, dr, full) := match ← lastFrame.get with
     | some (p, d) => (GPU.Batch.changedRanges p b.prims, GPU.Batch.changedRanges d b.data, false)
     | none => (.empty, .empty, true)
   lastFrame.set (some (b.prims, b.data))
   drawRaw b.prims b.data pr dr full b.count.toUInt32 w.toUInt32 h.toUInt32
     (FloatArray.empty.push bg.r |>.push bg.g |>.push bg.b |>.push bg.a) readback
+
+/-- Lower a `w × h` scene and draw it on the GPU. -/
+def draw (w h : Nat) (ops : Array RenderOp) (bg : Color) (readback : Bool := false) :
+    IO ByteArray :=
+  drawBatch (GPU.Batch.build w h ops) w h bg readback
+
+/-! ## Shells that own the loop (Android)
+
+The Android shell runs its loop in C: it creates the surface from its window
+with the shader below (`uvl_wgpu_init` in `native/gpu_shell.c`) and presents
+frames with `uvl_host_gpu_present` and `uvl_host_mark_clean` instead of
+`uvl_host_present` (the CPU rasterizer). -/
+
+/-- The WGSL program. -/
+@[export uvl_host_gpu_shader]
+def hostShader (_ : Unit) : String := GPU.shaderSource
+
+/-- The fragment entry points, comma separated. -/
+@[export uvl_host_gpu_entries]
+def hostEntries (_ : Unit) : String := entries
+
+/-- Draw the current frame on a `w × h` window surface, with the app's top-left
+corner at `(x, y)` (below the status bar); the rest is the background.
+(`AnyRuntime` is too large a type for an `IO` result: the shell clears `dirty`
+with `uvl_host_mark_clean`.) -/
+@[export uvl_host_gpu_present]
+def hostPresent (r : AnyRuntime) (x y w h : UInt32) : IO Unit := do
+  let ops := #[RenderOp.transform (Affine.translate x.toFloat y.toFloat) r.rt.ops]
+  discard <| drawBatch (GPU.Batch.build w.toNat h.toNat ops) w.toNat h.toNat r.rt.app.background
 
 end UVL.Native.GPU

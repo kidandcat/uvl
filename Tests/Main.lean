@@ -1,5 +1,6 @@
 import Examples.Scenes
 import Examples.Counter
+import Examples.Sprites
 import Tests.PngDecode
 import Tests.Tile
 import Tests.Damage
@@ -7,6 +8,7 @@ import Tests.GPU
 import Tests.Text
 import Tests.Controls
 import Tests.Html
+import Tests.Camera
 
 /-!
 Test driver (`lake test`).
@@ -40,6 +42,12 @@ def counterAfterClicks : Runtime Examples.Counter.Model Examples.Counter.Msg := 
   -- the hover feedback has faded in
   return rt.simulate [.keyDown (.char '+'), .tick 0.2]
 
+/-- The sprites example after a two-finger pinch and half a second of walking. -/
+def mapSession : Runtime Examples.Sprites.Model Examples.Sprites.Msg :=
+  (Runtime.start (Examples.Sprites.app 400 240 300 0.8) 400 240).simulate
+    [.touchDown 1 100 120, .touchDown 2 300 120, .touchMove 2 340 120, .touchMove 1 80 120,
+     .touchUp 1 80 120, .touchUp 2 340 120, .tick 0.5]
+
 def goldens : List Golden := [
   ⟨"primitives", 480, 320, fun _ => Image.toPNG (Raster.render 480 320 Examples.primitives)⟩,
   ⟨"hello", 320, 160, fun _ => Image.toPNG (UI.render Examples.hello 320 160 (Color.hex 0xECEFF1))⟩,
@@ -49,7 +57,9 @@ def goldens : List Golden := [
   ⟨"typography", 460, 280, fun _ =>
     Image.toPNG (UI.render Examples.typography 460 280 (Color.hex 0xECEFF1))⟩,
   ⟨"msdf", 560, 260, fun _ => Image.toPNG (Raster.render 560 260 Examples.msdfText)⟩,
-  ⟨"controls", 960, 360, fun _ => Tests.Controls.session.framePNG⟩
+  ⟨"sprites", 240, 160, fun _ => Image.toPNG (Raster.render 240 160 Examples.spriteScene)⟩,
+  ⟨"controls", 960, 360, fun _ => Tests.Controls.session.framePNG⟩,
+  ⟨"map", 400, 240, fun _ => mapSession.framePNG⟩
 ]
 
 /-- Max channel difference allowed, and fraction of bytes allowed to differ. -/
@@ -76,7 +86,7 @@ def checkGolden (update : Bool) (g : Golden) : IO Bool := do
   if expected == actual then
     IO.println s!"  [ok] {g.name} (byte-identical)"
     return true
-  match Tests.Png.decode expected, Tests.Png.decode actual with
+  match Image.decodePNG expected, Image.decodePNG actual with
   | .ok (ew, eh, ed), .ok (aw, ah, ad) =>
     if ew != aw || eh != ah then
       IO.println s!"  [FAIL] {g.name}: size {aw}x{ah}, expected {ew}x{eh}"
@@ -136,7 +146,7 @@ def appTests : IO Bool := do
 
 def codecTests : IO Bool := do
   let fb := Raster.render 37 23 Examples.primitives (Color.hex 0x123456)
-  let ok := match Tests.Png.decode (Image.toPNG fb) with
+  let ok := match Image.decodePNG (Image.toPNG fb) with
     | .ok (w, h, d) => w == 37 && h == 23 && d == fb.data
     | .error _ => false
   check "PNG round-trip (odd size, all filters)" ok
@@ -153,6 +163,7 @@ def main (args : List String) : IO UInt32 := do
   ok := (← appTests) && ok
   IO.println "codecs:"
   ok := (← codecTests) && ok
+  ok := (← Tests.PngDecode.run) && ok
   IO.println "tiles / bare-metal:"
   ok := (← Tests.Tile.run) && ok
   IO.println "partial redraw:"
@@ -161,6 +172,8 @@ def main (args : List String) : IO UInt32 := do
   ok := (← Tests.Controls.run) && ok
   IO.println "TrueType text:"
   ok := (← Tests.Text.run) && ok
+  IO.println "camera and gestures:"
+  ok := (← Tests.Camera.run) && ok
   IO.println "GPU pipeline (interpreted):"
   ok := (← Tests.GPU.run) && ok
   IO.println (if ok then "ALL TESTS PASSED" else "SOME TESTS FAILED")

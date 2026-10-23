@@ -29,6 +29,9 @@ Record layout (`GPU/Kernels.lean` reads the same slots):
 | 28–31  | solid color                                                      |
 | 32–35  | gradient geometry                                                |
 
+Sprites read their texels from the `tex` buffer the same way: one texture per
+frame, uploaded when it changes (sprites of any other texture are skipped).
+
 MSDF glyphs read their texels from a third buffer, the atlas, which persists
 across frames: a batch names the atlas it uses and the glyphs it draws
 (`atlasGlyphs`), and the host uploads each glyph's cell the first time it shows
@@ -48,6 +51,8 @@ structure Batch where
   atlas : Option MSDF.Atlas := none
   /-- Atlas glyphs drawn by the batch, in order of first use. -/
   atlasGlyphs : Array Nat := #[]
+  /-- The sprite texture the batch draws from, if any. -/
+  texture : Option Texture := none
 deriving Inhabited
 
 /-- A primitive record before packing. -/
@@ -64,12 +69,21 @@ structure Prim where
 
 namespace Batch
 
+/-! The arrays are taken out of the batch before appending (`takePrims`,
+`takeData`): `{ b with prims := b.prims.push x }` would push onto an array
+still shared with `b`, copying it on every primitive. -/
+
+@[inline] def takePrims (b : Batch) : FloatArray × Batch := (b.prims, { b with prims := .empty })
+@[inline] def takeData (b : Batch) : FloatArray × Batch := (b.data, { b with data := .empty })
+
 /-- Append the paint's stops to `data`; returns slots 24..35. -/
 def paintSlots (b : Batch) (p : Paint) : Batch × Array Float :=
   let stops (b : Batch) (ss : Array Stop) : Batch × Float :=
     let off := b.data.size.toF
-    (ss.foldl (init := b) fun b (o, c) =>
-      { b with data := b.data.push o |>.push c.r |>.push c.g |>.push c.b |>.push c.a }, off)
+    let (d, b) := b.takeData
+    let d := ss.foldl (init := d) fun d (o, c) =>
+      d.push o |>.push c.r |>.push c.g |>.push c.b |>.push c.a
+    ({ b with data := d }, off)
   match p with
   | .solid c => (b, #[0, 0, 0, 0, c.r, c.g, c.b, c.a, 0, 0, 0, 0])
   | .linear p0 p1 ss =>
@@ -79,10 +93,10 @@ def paintSlots (b : Batch) (p : Paint) : Batch × Array Float :=
     let (b, off) := stops b ss
     (b, #[2, off, ss.size.toF, 0, 0, 0, 0, 0, c.x, c.y, r, 0])
 
-/-- Append a primitive covering the pixels of `clip` (nothing if empty). -/
-def push {w h : Nat} (b : Batch) (clip : Clip w h) (pr : Prim) (paint : Paint) : Batch :=
+/-- Append a primitive covering the pixels of `clip` (nothing if empty), with
+slots 24..35 given. -/
+def pushSlots {w h : Nat} (b : Batch) (clip : Clip w h) (pr : Prim) (ps : Array Float) : Batch :=
   if clip.x1 ≤ clip.x0 || clip.y1 ≤ clip.y0 then b else
-  let (b, ps) := b.paintSlots paint
   let m := pr.inv
   let rec_ : Array Float :=
     #[pr.kind.toF, pr.shape.toF, pr.mode.toF, pr.hw,
@@ -90,7 +104,14 @@ def push {w h : Nat} (b : Batch) (clip : Clip w h) (pr : Prim) (paint : Paint) :
       m.a, m.b, m.c, m.d, m.e, m.f, pr.scale, pr.blur,
       pr.a.x, pr.a.y, pr.a.z, pr.a.w,
       pr.radii.tl, pr.radii.tr, pr.radii.br, pr.radii.bl] ++ ps
-  { b with prims := rec_.foldl FloatArray.push b.prims, count := b.count + 1 }
+  let (p, b) := b.takePrims
+  { b with prims := rec_.foldl FloatArray.push p, count := b.count + 1 }
+
+/-- Append a primitive covering the pixels of `clip` (nothing if empty). -/
+def push {w h : Nat} (b : Batch) (clip : Clip w h) (pr : Prim) (paint : Paint) : Batch :=
+  if clip.x1 ≤ clip.x0 || clip.y1 ≤ clip.y0 then b else
+  let (b, ps) := b.paintSlots paint
+  b.pushSlots clip pr ps
 
 /-- Shape number and parameters (slots 1, 16..23) of an analytic shape. -/
 def shapeParams : Shape → Option (Nat × V4 × SDF.Corners × Rect)
@@ -104,8 +125,10 @@ def shapeParams : Shape → Option (Nat × V4 × SDF.Corners × Rect)
 /-- Append `n` records of 5 floats to `data`; returns their offset. -/
 def pushData (b : Batch) (recs : Array (Float × Float × Float × Float × Float)) : Batch × Float :=
   let off := b.data.size.toF
-  ({ b with data := recs.foldl (init := b.data) fun d (p, q, r, s, t) =>
-      d.push p |>.push q |>.push r |>.push s |>.push t }, off)
+  let (d, b) := b.takeData
+  let d := recs.foldl (init := d) fun d (p, q, r, s, t) =>
+    d.push p |>.push q |>.push r |>.push s |>.push t
+  ({ b with data := d }, off)
 
 /-- Rows per band of a path primitive. Each band only carries the edges that
 can affect its pixels, so the per-pixel loops of the path kernels stay short
@@ -213,6 +236,17 @@ def op {w h : Nat} (ctx : Ctx w h) (b : Batch) (o : RenderOp) : Batch :=
         { kind := kindMSDF, inv := ctx.m.inverse, scale := ctx.m.scaleFactor,
           a := ⟨(q.glyph * MSDF.cellFloats).toF, c.x, c.y, c.texel⟩,
           radii := ⟨q.x, q.y, q.size, 0⟩ } paint
+  | .sprites tex quads smooth =>
+    if b.texture.any (·.id != tex.id) then b else
+    let inv := ctx.m.inverse
+    let scale := ctx.m.scaleFactor
+    quads.foldl (init := { b with texture := some tex }) fun b s =>
+      if s.src.w <= 0 || s.src.h <= 0 || s.opacity <= 0 then b else
+      let p := s.params
+      b.pushSlots (ctx.clipTo ((ctx.m.mapRect s.dst).inflate 1.0))
+        { kind := kindSprite, inv, scale, a := ⟨p.cx, p.cy, p.hx, p.hy⟩,
+          radii := ⟨p.dx, p.dy, p.ku, p.kv⟩ }
+        #[p.sx, p.sy, p.sw, p.sh, tex.w.toF, if smooth then 1 else 0, s.opacity, 0, 0, 0, 0, 0]
   | .transform m ops => opArray { ctx with m := ctx.m.compose m } ops 0 b
   | .clip r ops => opArray { ctx with clip := ctx.clipTo (ctx.m.mapRect r) } ops 0 b
   | .group ops => opArray ctx ops 0 b
@@ -232,6 +266,17 @@ def atlasData (b : Batch) : FloatArray := Id.run do
     let tex := a.glyphTexels g
     for k in [0:tex.size] do
       out := out.set! (g * MSDF.cellFloats + k) tex[k]!
+  return out
+
+/-- The texture's texels as `u32`s (`tex` buffer), for the interpreted
+reference renderer (hosts upload the bytes as they are). -/
+def texData (b : Batch) : FloatArray := Id.run do
+  let some t := b.texture | return .empty
+  let n := t.w * t.h
+  let mut out := FloatArray.emptyWithCapacity n
+  for i in [0:n] do
+    let byte (k : Nat) : Float := (t.pixels.get! (4 * i + k)).toFloat
+    out := out.push (byte 0 + 256 * (byte 1 + 256 * (byte 2 + 256 * byte 3)))
   return out
 
 /-- Gaps shorter than this many floats between two changed ranges are

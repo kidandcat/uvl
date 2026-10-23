@@ -18,13 +18,13 @@ lean_lib UVL where
   precompileModules := true
 
 lean_lib Tests where
-  globs := #[.one `Tests.PngDecode, .one `Tests.Tile, .one `Tests.Damage, .one `Tests.GPU, .one `Tests.Text, .one `Tests.Controls, .one `Tests.Html]
+  globs := #[.one `Tests.PngDecode, .one `Tests.Tile, .one `Tests.Damage, .one `Tests.GPU, .one `Tests.Text, .one `Tests.Controls, .one `Tests.Html, .one `Tests.Camera]
 
 lean_lib Examples where
   globs := #[.one `Examples.Scenes, .one `Examples.Counter, .one `Examples.BareMetalCounter,
     .one `Examples.Clock, .one `Examples.BareMetalClock,
     .one `Examples.CounterWeb, .one `Examples.DashboardWeb, .one `Examples.TextWeb, .one `Examples.Controls, .one `Examples.ControlsWeb,
-    .one `Examples.Phone, .one `Examples.PhoneAndroid]
+    .one `Examples.Phone, .one `Examples.PhoneAndroid, .one `Examples.Sprites, .one `Examples.SpritesAndroid]
 
 lean_exe «uvl-demo» where
   root := `Examples.Demo
@@ -107,10 +107,12 @@ lean_lib UVLGPU
 
 /-- Lean links with its own (older) glibc sysroot; SDL3 and wgpu-native are
 built against the system glibc, whose symbols resolve at load time. The rpath
-lets executables find wgpu-native where it was found at build time. -/
+lets executables find wgpu-native where it was found at build time. (macOS has
+no separate sysroot: only the rpath is needed.) -/
 def nativeLinkArgs : Array String := run_io do
   let dir := (← IO.getEnv "WGPU_NATIVE_DIR").map System.FilePath.mk |>.getD (__dir__ / ".lake" / "wgpu-native")
-  return #["-Wl,--allow-shlib-undefined", s!"-Wl,-rpath,{dir / "lib"}"]
+  let rpath := s!"-Wl,-rpath,{dir / "lib"}"
+  return if System.Platform.isOSX then #[rpath] else #["-Wl,--allow-shlib-undefined", rpath]
 
 /-- Renders scenes headless on the GPU and compares them with the CPU. -/
 lean_exe «uvl-gpu-check» where
@@ -125,6 +127,12 @@ lean_exe «uvl-counter» where
 
 lean_exe «uvl-controls» where
   root := `Examples.ControlsWindow
+  moreLinkObjs := #[sdl_shell.o, gpu_shell.o, sdl3_lib, wgpu_lib]
+  moreLinkArgs := nativeLinkArgs
+
+/-- A tile map with 300 walking units, camera gestures and an fps counter. -/
+lean_exe «uvl-sprites» where
+  root := `Examples.SpritesWindow
   moreLinkObjs := #[sdl_shell.o, gpu_shell.o, sdl3_lib, wgpu_lib]
   moreLinkArgs := nativeLinkArgs
 

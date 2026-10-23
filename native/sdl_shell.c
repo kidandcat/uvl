@@ -10,6 +10,8 @@
  *   1 move (x, y)        2 down (x, y, button)   3 up (x, y, button)
  *   4 wheel (dx, dy)     5 key down (keycode)    6 key up (keycode)
  *   7 text (codepoint)   8 resize (w, h)         9 quit     10 pointer leave
+ *   11/12 composition    13/14/15 touch down/move/up (finger id, x, y)
+ *   16 pinch (scale, x, y)
  */
 #include <lean/lean.h>
 #include <SDL3/SDL.h>
@@ -20,6 +22,16 @@
 
 /* native/gpu_shell.c */
 int uvl_wgpu_init(const WGPUChainedStruct *surface_desc, const char *wgsl, const char *entries);
+
+#ifdef __APPLE__
+/* Cocoa only works on the process's main thread, but Lean runs `main` on a
+ * new thread with a bigger stack unless LEAN_MAIN_USE_THREAD=0. This runs
+ * before `main`, so the whole app (and SDL) stays on the main thread, whose
+ * stack is 8 MB on macOS. */
+__attribute__((constructor)) static void uvl_main_on_main_thread(void) {
+  setenv("LEAN_MAIN_USE_THREAD", "0", 0);
+}
+#endif
 
 static SDL_Window *win = NULL;
 static SDL_Renderer *ren = NULL;
@@ -146,6 +158,26 @@ LEAN_EXPORT lean_obj_res uvl_sdl_poll(lean_obj_arg world) {
       arr = push(arr, 12, 0, 0, 0);
       break;
     }
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_FINGER_MOTION:
+    case SDL_EVENT_FINGER_UP:
+    case SDL_EVENT_FINGER_CANCELED: {
+      /* touch screens only (trackpads move the mouse and pinch); SDL also
+         drives the mouse with the first finger */
+      if (SDL_GetTouchDeviceType(e.tfinger.touchID) != SDL_TOUCH_DEVICE_DIRECT) break;
+      int ww = 0, wh = 0;
+      SDL_GetWindowSize(win, &ww, &wh);
+      int kind = e.type == SDL_EVENT_FINGER_DOWN ? 13 : e.type == SDL_EVENT_FINGER_MOTION ? 14 : 15;
+      arr = push(arr, kind, (double)(e.tfinger.fingerID & 0xFFFFFF), e.tfinger.x * ww,
+                 e.tfinger.y * wh);
+      break;
+    }
+    case SDL_EVENT_PINCH_UPDATE: {
+      float mx = 0, my = 0;
+      SDL_GetMouseState(&mx, &my);
+      arr = push(arr, 16, e.pinch.scale, mx, my);
+      break;
+    }
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       arr = push(arr, 8, e.window.data1, e.window.data2, 0); break;
     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
@@ -178,7 +210,8 @@ LEAN_EXPORT lean_obj_res uvl_sdl_present(b_lean_obj_arg rgba, uint32_t w, uint32
   if (!ren) {
     ren = SDL_CreateRenderer(win, NULL);
     if (!ren) return io_sdl_error("SDL_CreateRenderer");
-    SDL_SetRenderVSync(ren, 1);
+    const char *vsync = getenv("UVL_VSYNC"); /* UVL_VSYNC=0: no vsync (measuring) */
+    SDL_SetRenderVSync(ren, vsync && !strcmp(vsync, "0") ? 0 : 1);
   }
   if (lean_sarray_size(rgba) < (size_t)w * h * 4) return io_sdl_error("frame too small");
   if (!tex || tex_w != (int)w || tex_h != (int)h) {

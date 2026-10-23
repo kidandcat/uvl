@@ -2,6 +2,7 @@ import UVLGPU
 import Examples.Scenes
 import Examples.Counter
 import Examples.Controls
+import Examples.Sprites
 
 /-!
 `uvl-gpu-check`: render scenes with the desktop GPU renderer (headless,
@@ -23,14 +24,21 @@ def counterScene : Scene :=
   let rt := Runtime.start Examples.Counter.app 480 360
   ⟨"counter", 480, 360, rt.ops, rt.app.background⟩
 
+/-- The sprites example after half a second, at a fractional zoom. -/
+def mapScene : Scene :=
+  let rt := (Runtime.start (Examples.Sprites.app 640 360 300 1.37) 640 360).simulate [.tick 0.5]
+  ⟨"map", 640, 360, rt.ops, rt.app.background⟩
+
 def scenes : List Scene := [
   ⟨"primitives", 480, 320, Examples.primitives, Color.white⟩,
   ⟨"hello", 320, 160, Examples.hello.toOps 320 160, Color.hex 0xECEFF1⟩,
   ⟨"dashboard", 800, 600, Examples.dashboard.toOps 800 600, Color.hex 0xF5F7FA⟩,
   ⟨"typography", 460, 280, Examples.typography.toOps 460 280, Color.hex 0xECEFF1⟩,
   ⟨"msdf", 560, 260, Examples.msdfText, Color.white⟩,
+  ⟨"sprites", 240, 160, Examples.spriteScene, Color.white⟩,
   ⟨"controls", 960, 360, (Runtime.start Examples.Controls.app 960 360).ops, Color.hex 0xF5F7FA⟩,
-  counterScene
+  counterScene,
+  mapScene
 ]
 
 /-- Largest channel error and channels off by more than 2. -/

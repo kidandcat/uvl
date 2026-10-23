@@ -14,7 +14,7 @@
 //       canvas2d the same CPU frames through putImageData (no WebGPU).
 
 const EV = { move: 1, down: 2, up: 3, scroll: 4, keyDown: 5, keyUp: 6, text: 7, resize: 8, leave: 10,
-  compose: 11, composeEnd: 12 };
+  compose: 11, composeEnd: 12, touchDown: 13, touchMove: 14, touchUp: 15, pinch: 16 };
 
 // DOM key names → SDL keycodes (printable keys use their codepoint).
 const KEYS = {
@@ -85,6 +85,7 @@ class GPURenderer {
         { binding: 1, visibility: stage, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: stage, buffer: { type: 'uniform' } },
         { binding: 3, visibility: stage, buffer: { type: 'read-only-storage' } },
+        { binding: 4, visibility: stage, buffer: { type: 'read-only-storage' } },
       ],
     });
     const layout = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
@@ -101,6 +102,8 @@ class GPURenderer {
     this.scene = null;
     // MSDF glyph atlas: persists across frames, glyph cells are written once
     this.atlas = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    // sprite texture (RGBA8 as u32s); not uploaded by the web shell yet
+    this.tex = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   }
 
   /** Apply the atlas updates queued by the wasm module (see web_shell.c). */
@@ -171,6 +174,7 @@ class GPURenderer {
           { binding: 1, resource: { buffer: this.data } },
           { binding: 2, resource: { buffer: this.screen } },
           { binding: 3, resource: { buffer: this.atlas } },
+          { binding: 4, resource: { buffer: this.tex } },
         ],
       });
     }
@@ -536,21 +540,35 @@ export async function startUVL(canvas, createModule, { backend } = {}) {
   ime.addEventListener('blur', () => { push(EV.keyUp, KEYS.Shift); push(EV.keyUp, KEYS.Control); });
 
   function bind(el) {
-    el.addEventListener('pointermove', (e) => push(EV.move, e.offsetX, e.offsetY));
+    // every finger goes out as a touch event (multitouch gestures); only the
+    // primary one drives the pointer
+    const touch = (kind, e) => {
+      if (e.pointerType === 'touch') push(kind, e.pointerId, e.offsetX, e.offsetY);
+      return e.isPrimary;
+    };
+    el.addEventListener('pointermove', (e) => {
+      if (touch(EV.touchMove, e)) push(EV.move, e.offsetX, e.offsetY);
+    });
     el.addEventListener('pointerdown', (e) => {
       el.setPointerCapture(e.pointerId);
       el.focus();
+      if (!touch(EV.touchDown, e)) return;
       push(EV.down, e.offsetX, e.offsetY, button(e));
       // handle the press now, so that a text field focused by it can take the
       // keyboard inside this user gesture (virtual keyboards need that)
       pump(performance.now());
     });
-    el.addEventListener('pointerup', (e) => push(EV.up, e.offsetX, e.offsetY, button(e)));
+    el.addEventListener('pointerup', (e) => {
+      if (touch(EV.touchUp, e)) push(EV.up, e.offsetX, e.offsetY, button(e));
+    });
+    el.addEventListener('pointercancel', (e) => { touch(EV.touchUp, e); });
     el.addEventListener('pointerleave', () => push(EV.leave));
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
       const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? h : 1; // lines / pages to pixels
-      push(EV.scroll, e.deltaX * k, e.deltaY * k);
+      // browsers report a trackpad pinch as a wheel event with ctrlKey set
+      if (e.ctrlKey) push(EV.pinch, Math.exp(-e.deltaY * k / 100), e.offsetX, e.offsetY);
+      else push(EV.scroll, e.deltaX * k, e.deltaY * k);
     }, { passive: false });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     bindKeys(el, false);

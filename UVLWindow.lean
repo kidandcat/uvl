@@ -31,6 +31,33 @@ namespace UVL.SDL
 
 variable {Model Msg : Type}
 
+/-- Frame timings accumulated for `UVL_STATS`, in nanoseconds. -/
+structure Stats where
+  since : Nat
+  frames : Nat := 0
+  /-- Events and app update (`Runtime.step`). -/
+  step : Nat := 0
+  /-- GPU: the view as render ops. CPU: view and rasterization (`Runtime.present`). -/
+  view : Nat := 0
+  /-- GPU: lowering to primitives. -/
+  lower : Nat := 0
+  /-- GPU: diffing, upload, submit and present. CPU: upload and present. -/
+  present : Nat := 0
+
+def Stats.report (s : Stats) (now : Nat) (gpu : Bool) : IO Unit := do
+  let n := s.frames.toFloat
+  let ms (v : Nat) : Float := (v.toFloat / n / 1e4).round / 100
+  let fps := (n * 1e10 / (now - s.since).toFloat).round / 10
+  IO.eprintln <| if gpu then
+    s!"uvl: {fps} fps | per frame: step {ms s.step} ms, view {ms s.view} ms, " ++
+      s!"lower {ms s.lower} ms, upload+submit+present {ms s.present} ms"
+  else
+    s!"uvl: {fps} fps | per frame: step {ms s.step} ms, view+raster {ms s.view} ms, " ++
+      s!"upload+present {ms s.present} ms"
+
+/-- Evaluate `x` before the next action (for timings). -/
+@[noinline] def force {α : Type} (x : α) : IO α := pure x
+
 /-- Run `app` in a desktop window until it is closed.
 
 Frames are rendered only when something changed (or every frame while the app
@@ -42,11 +69,16 @@ For headless smoke tests: `UVL_MAX_FRAMES=n` exits after `n` presented frames,
 queue after the first frame. When rendering on the GPU, the screenshot step
 also reads back what the GPU draws for the last frame and fails if it differs
 from the CPU frame by more than float rounding. `UVL_RENDERER=cpu` disables the
-GPU renderer. -/
+GPU renderer.
+
+For measuring: `UVL_STATS=1` never waits for events and prints the frame rate
+and where the time goes every second. Combine it with `UVL_PRESENT=immediate`
+(GPU) or `UVL_VSYNC=0` (CPU) to measure past the display refresh rate. -/
 partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Unit := do
   let maxFrames := (← IO.getEnv "UVL_MAX_FRAMES").bind String.toNat?
   let screenshot ← IO.getEnv "UVL_SCREENSHOT"
   let clickTarget := (← IO.getEnv "UVL_CLICK_TARGET").bind String.toNat?
+  let stats := (← IO.getEnv "UVL_STATS").isSome
   openWindow app.title w.toUInt32 h.toUInt32
   let gpu ← gpuInit GPU.shaderSource Native.GPU.entries
   if gpu then IO.eprintln s!"uvl: GPU renderer on {← Native.GPU.adapterName}"
@@ -64,11 +96,14 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
           close
           throw <| IO.userError "GPU frame differs from the CPU frame"
     close
-  let rec loop (rt : Runtime Model Msg) (last : UInt64) (frames : Nat)
+  let rec loop (rt : Runtime Model Msg) (last : UInt64) (frames : Nat) (st : Stats)
       (lastArea : Option Window := none) : IO Unit := do
+    let t0 ← IO.monoNanosNow
     let raw ← pollRaw
     let now ← ticksMs
-    let mut rt := rt.step raw (now - last).toNat.toF
+    let mut rt ← force (rt.step raw (now - last).toNat.toF)
+    let t1 ← IO.monoNanosNow
+    let mut st := { st with step := st.step + (t1 - t0) }
     if rt.quit then finish rt; return
     let (copied, rt') := rt.takeClipboard
     rt := rt'
@@ -79,24 +114,41 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
       if let some r := area then setInputRect r.x.toUInt32 r.y.toUInt32 r.w.toUInt32 r.h.toUInt32
     let mut frames := frames
     if rt.dirty then
+      let t0 ← IO.monoNanosNow
       if gpu then
-        discard <| Native.GPU.draw rt.width rt.height rt.ops rt.app.background
+        let ops ← force rt.ops
+        let t1 ← IO.monoNanosNow
+        let b ← force (GPU.Batch.build rt.width rt.height ops)
+        let t2 ← IO.monoNanosNow
+        discard <| Native.GPU.drawBatch b rt.width rt.height rt.app.background
+        let t3 ← IO.monoNanosNow
+        st := { st with view := st.view + (t1 - t0), lower := st.lower + (t2 - t1),
+                        present := st.present + (t3 - t2) }
         rt := { rt with dirty := false }
       else
-        rt := rt.present
+        rt ← force rt.present
+        let t1 ← IO.monoNanosNow
         present rt.pixels rt.width.toUInt32 rt.height.toUInt32
+        let t2 ← IO.monoNanosNow
+        st := { st with view := st.view + (t1 - t0), present := st.present + (t2 - t1) }
       frames := frames + 1
+      st := { st with frames := st.frames + 1 }
       if frames == 1 then
         if let some i := clickTarget then
           if let some t := rt.targets[i]? then
             pushClick (t.x + t.w / 2).toF (t.y + t.h / 2).toF
     if let some m := maxFrames then
       if frames ≥ m then finish rt; return
+    if stats then
+      let t ← IO.monoNanosNow
+      if t - st.since ≥ 1000000000 && st.frames > 0 then
+        st.report t gpu
+        st := { since := t }
     -- a blinking caret alone only needs a frame every half period
-    if rt.app.animating rt.model || rt.hoverFade < 1 then wait 1
+    else if rt.app.animating rt.model || rt.hoverFade < 1 then wait 1
     else if rt.animating then wait 50
     else wait 250
-    loop rt now frames area
-  loop (Runtime.start app w h) (← ticksMs) 0
+    loop rt now frames st area
+  loop (Runtime.start app w h) (← ticksMs) 0 { since := ← IO.monoNanosNow }
 
 end UVL.SDL
