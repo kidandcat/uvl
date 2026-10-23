@@ -38,6 +38,9 @@ def kindPathStroke : Nat := 3
 def kindGlyph : Nat := 4
 def kindMSDF : Nat := 5
 def kindSprite : Nat := 6
+/-- A run of hardware-sampled sprite instances (native hosts only; the uber
+kernels skip it, see `Batch.pushRun`). -/
+def kindSpriteRun : Nat := 64
 
 def prims : Buffer := ⟨"prims"⟩
 def data : Buffer := ⟨"data"⟩

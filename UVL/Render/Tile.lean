@@ -77,6 +77,10 @@ def bounds (m : Affine) (op : RenderOp) : Option Rect :=
     quads.foldl (init := none) fun acc s =>
       let r := (m.mapRect s.dst).inflate 2.0
       some (match acc with | some a => Rect.union a r | none => r)
+  | .layer l =>
+    l.quads.foldl (init := none) fun acc s =>
+      let r := (m.mapRect s.dst).inflate 2.0
+      some (match acc with | some a => Rect.union a r | none => r)
   | .transform m' ops => boundsAll (m.compose m') ops 0 none
   | .clip r ops => (boundsAll m ops 0 none).map fun b =>
     -- intersection is contained in both; keep the smaller one cheaply

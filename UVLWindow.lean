@@ -80,7 +80,7 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
   let clickTarget := (← IO.getEnv "UVL_CLICK_TARGET").bind String.toNat?
   let stats := (← IO.getEnv "UVL_STATS").isSome
   openWindow app.title w.toUInt32 h.toUInt32
-  let gpu ← gpuInit GPU.shaderSource Native.GPU.entries
+  let gpu ← gpuInit GPU.nativeShaderSource Native.GPU.entries
   if gpu then IO.eprintln s!"uvl: GPU renderer on {← Native.GPU.adapterName}"
   else IO.eprintln "uvl: CPU renderer"
   let finish (rt : Runtime Model Msg) : IO Unit := do
@@ -118,7 +118,7 @@ partial def run (app : App Model Msg) (w : Nat := 800) (h : Nat := 600) : IO Uni
       if gpu then
         let ops ← force rt.ops
         let t1 ← IO.monoNanosNow
-        let b ← force (GPU.Batch.build rt.width rt.height ops)
+        let b ← force (GPU.Batch.build rt.width rt.height ops (instanced := true))
         let t2 ← IO.monoNanosNow
         discard <| Native.GPU.drawBatch b rt.width rt.height rt.app.background
         let t3 ← IO.monoNanosNow

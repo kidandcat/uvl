@@ -107,4 +107,18 @@ with straight alpha. -/
 
 end Texture
 
+/-- A static sprite layer: quads that stay the same for many frames (terrain,
+scenery). The GPU host uploads its instances once per `key` and afterwards only
+draws them with the current transform, so a layer costs nothing to lower.
+Layers compare by `key` and texture id: change the key whenever the quads
+change. The CPU rasterizer draws a layer exactly like `RenderOp.sprites`. -/
+structure SpriteLayer where
+  key : Nat
+  tex : Texture
+  quads : Array Sprite
+  smooth : Bool := false
+deriving Inhabited
+
+instance : BEq SpriteLayer := ⟨fun a b => a.key == b.key && a.tex.id == b.tex.id⟩
+
 end UVL

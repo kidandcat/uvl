@@ -41,6 +41,9 @@ inductive RenderOp where
   /-- Textured quads cut from `tex` (see `Render/Sprite.lean`), sampled nearest
   or, with `smooth`, bilinear. -/
   | sprites (tex : Texture) (quads : Array Sprite) (smooth : Bool := false)
+  /-- A static sprite layer (see `SpriteLayer`): drawn like `sprites`, but GPU
+  hosts keep its instances uploaded across frames. -/
+  | layer (l : SpriteLayer)
   | transform (m : Affine) (ops : Array RenderOp)
   | clip (r : Rect) (ops : Array RenderOp)
   | group (ops : Array RenderOp)

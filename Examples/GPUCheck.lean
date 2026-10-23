@@ -77,6 +77,50 @@ def incremental : IO Bool := do
   IO.println s!"  [{if good then "ok" else "FAIL"}] incremental: {events.length} counter frames match the CPU, {up} of {total} bytes uploaded"
   return good
 
+/-- Every `sprites` op turned into a static layer (keys by position). -/
+partial def toLayers (ops : Array RenderOp) (k : Nat := 0) : Array RenderOp × Nat :=
+  ops.foldl (init := (#[], k)) fun (acc, k) o =>
+    match o with
+    | .sprites t q s => (acc.push (.layer { key := 1000 + k, tex := t, quads := q, smooth := s }), k + 1)
+    | .transform m os => let (os, k) := toLayers os k; (acc.push (.transform m os), k)
+    | .clip r os => let (os, k) := toLayers os k; (acc.push (.clip r os), k)
+    | .group os => let (os, k) := toLayers os k; (acc.push (.group os), k)
+    | o => (acc.push o, k)
+
+/-- Hardware-sampled instanced sprites and static layers against the CPU:
+quads are not edge-antialiased, so a few edge pixels may differ. -/
+def dump (name : String) (w h : Nat) (px : ByteArray) : IO Unit := do
+  let some dir ← IO.getEnv "UVL_GPU_DUMP" | return
+  if hs : px.size = w * h * 4 then
+    Image.writePNG (System.FilePath.mk dir / s!"{name}.png") (⟨px, hs⟩ : FrameBuffer w h)
+
+def instancedCheck : IO Bool := do
+  let mut ok := true
+  let mut base := 1000
+  for s in scenes.filter (fun s => s.name == "sprites" || s.name == "map") do
+    base := base + 100
+    for (label, ops) in [("instanced", s.ops), ("layers", (toLayers s.ops base).1)] do
+      let b := GPU.Batch.build s.w s.h ops (instanced := true)
+      let gpu ← Native.GPU.drawBatch b s.w s.h s.bg (readback := true)
+      let cpu := (Raster.render s.w s.h s.ops s.bg).data
+      dump s!"{s.name}-{label}-gpu" s.w s.h gpu
+      dump s!"{s.name}-cpu" s.w s.h cpu
+      let (mx, over) := compare gpu cpu
+      let good := gpu.size == cpu.size && over * 50 ≤ cpu.size
+      ok := ok && good
+      IO.println s!"  [{if good then "ok" else "FAIL"}] {s.name} {label}: {b.count} primitives, {b.sprites.size / GPU.Batch.spriteStride} dynamic instances, {b.layers.size} layers; max channel error {mx}, {over} channels off by more than 2"
+  -- split: the map's world at half resolution, upscaled; no HUD
+  let s := mapScene
+  let b := GPU.Batch.buildSplit s.w s.h 0.5 s.ops #[]
+  let gpu ← Native.GPU.drawBatch b s.w s.h s.bg (readback := true)
+  let cpu := (Raster.render s.w s.h s.ops s.bg).data
+  dump "map-split-gpu" s.w s.h gpu
+  let (mx, over) := compare gpu cpu
+  let good := gpu.size == cpu.size && b.split > 0 && b.worldW == 320
+  ok := ok && good
+  IO.println s!"  [{if good then "ok" else "FAIL"}] map split 0.5: world {b.worldW}x{b.worldH}, max channel error {mx}, {over} channels off by more than 2 (upscaled, expected)"
+  return ok
+
 def main : IO UInt32 := do
   unless ← Native.GPU.initHeadless' do
     IO.eprintln "uvl-gpu-check: no GPU (wgpu-native could not create a device)"
@@ -93,4 +137,5 @@ def main : IO UInt32 := do
     ok := ok && good
     IO.println s!"  [{if good then "ok" else "FAIL"}] {s.name} {s.w}x{s.h}: max channel error {mx}, {over} channels off by more than 2 (first frame incl. read-back {(t1 - t0).toFloat / 1e6} ms)"
   ok := (← incremental) && ok
+  ok := (← instancedCheck) && ok
   return if ok then 0 else 1

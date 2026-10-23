@@ -53,6 +53,24 @@ structure Batch where
   atlasGlyphs : Array Nat := #[]
   /-- The sprite texture the batch draws from, if any. -/
   texture : Option Texture := none
+  /-- Lower sprites to hardware-sampled instanced quads (`kindSpriteRun`
+  markers plus records in `sprites`) instead of per-sprite uber primitives.
+  Off by default: the interpreted reference renderer and the web host only
+  know the uber primitives. -/
+  instanced : Bool := false
+  /-- Instance records of the frame's dynamic sprite runs,
+  `spriteStride` floats each (see `pushInstance`). -/
+  sprites : FloatArray := .empty
+  /-- Static layers drawn this frame, in order of first use; a run's source
+  slot names its layer as `index + 1`. -/
+  layers : Array SpriteLayer := #[]
+  /-- Primitives `[0, split)` are the world, drawn into the scaled offscreen
+  target, the rest (the HUD) at native resolution (`buildSplit`). 0 = no
+  split. -/
+  split : Nat := 0
+  /-- Size of the scaled world target (when `split > 0`). -/
+  worldW : Nat := 0
+  worldH : Nat := 0
 deriving Inhabited
 
 /-- A primitive record before packing. -/
@@ -75,6 +93,7 @@ still shared with `b`, copying it on every primitive. -/
 
 @[inline] def takePrims (b : Batch) : FloatArray × Batch := (b.prims, { b with prims := .empty })
 @[inline] def takeData (b : Batch) : FloatArray × Batch := (b.data, { b with data := .empty })
+@[inline] def takeSprites (b : Batch) : FloatArray × Batch := (b.sprites, { b with sprites := .empty })
 
 /-- Append the paint's stops to `data`; returns slots 24..35. -/
 def paintSlots (b : Batch) (p : Paint) : Batch × Array Float :=
@@ -98,14 +117,40 @@ slots 24..35 given. -/
 def pushSlots {w h : Nat} (b : Batch) (clip : Clip w h) (pr : Prim) (ps : Array Float) : Batch :=
   if clip.x1 ≤ clip.x0 || clip.y1 ≤ clip.y0 then b else
   let m := pr.inv
-  let rec_ : Array Float :=
-    #[pr.kind.toF, pr.shape.toF, pr.mode.toF, pr.hw,
-      clip.x0.toF, clip.y0.toF, clip.x1.toF, clip.y1.toF,
-      m.a, m.b, m.c, m.d, m.e, m.f, pr.scale, pr.blur,
-      pr.a.x, pr.a.y, pr.a.z, pr.a.w,
-      pr.radii.tl, pr.radii.tr, pr.radii.br, pr.radii.bl] ++ ps
   let (p, b) := b.takePrims
-  { b with prims := rec_.foldl FloatArray.push p, count := b.count + 1 }
+  let p := p.push pr.kind.toF |>.push pr.shape.toF |>.push pr.mode.toF |>.push pr.hw
+    |>.push clip.x0.toF |>.push clip.y0.toF |>.push clip.x1.toF |>.push clip.y1.toF
+    |>.push m.a |>.push m.b |>.push m.c |>.push m.d |>.push m.e |>.push m.f
+    |>.push pr.scale |>.push pr.blur
+    |>.push pr.a.x |>.push pr.a.y |>.push pr.a.z |>.push pr.a.w
+    |>.push pr.radii.tl |>.push pr.radii.tr |>.push pr.radii.br |>.push pr.radii.bl
+  { b with prims := ps.foldl FloatArray.push p, count := b.count + 1 }
+
+/-- Floats per instance record: `dst x y w h`, `src x y w h` (texels),
+opacity, smooth, 0, 0. -/
+def spriteStride : Nat := 12
+
+/-- Append one instance record to `sprites`. -/
+@[inline] def pushInstance (out : FloatArray) (s : Sprite) (smooth : Bool) : FloatArray :=
+  out.push s.dst.x |>.push s.dst.y |>.push s.dst.w |>.push s.dst.h
+    |>.push s.src.x |>.push s.src.y |>.push s.src.w |>.push s.src.h
+    |>.push s.opacity |>.push (if smooth then 1 else 0) |>.push 0 |>.push 0
+
+/-- Append a `kindSpriteRun` marker: `count` instances starting at `first`
+of source `source` (0 = `sprites`, `i + 1` = `layers[i]`), drawn with the
+forward transform `m` and scissored to `clip`. Slots: 4–7 clip, 8–13 forward
+transform `a b c d e f`, 16 source, 17 first, 18 count, 19–20 texture size. -/
+def pushRun {w h : Nat} (b : Batch) (clip : Clip w h) (m : Affine) (tex : Texture)
+    (source first count : Nat) : Batch :=
+  if count == 0 || clip.x1 ≤ clip.x0 || clip.y1 ≤ clip.y0 then b else
+  let (p, b) := b.takePrims
+  let p := p.push kindSpriteRun.toF |>.push 0 |>.push 0 |>.push 0
+    |>.push clip.x0.toF |>.push clip.y0.toF |>.push clip.x1.toF |>.push clip.y1.toF
+    |>.push m.a |>.push m.b |>.push m.c |>.push m.d |>.push m.e |>.push m.f
+    |>.push 0 |>.push 0
+    |>.push source.toF |>.push first.toF |>.push count.toF |>.push tex.w.toF |>.push tex.h.toF
+  let p := (List.range (primStride - 21)).foldl (fun p _ => p.push 0) p
+  { b with prims := p, count := b.count + 1 }
 
 /-- Append a primitive covering the pixels of `clip` (nothing if empty). -/
 def push {w h : Nat} (b : Batch) (clip : Clip w h) (pr : Prim) (paint : Paint) : Batch :=
@@ -238,6 +283,14 @@ def op {w h : Nat} (ctx : Ctx w h) (b : Batch) (o : RenderOp) : Batch :=
           radii := ⟨q.x, q.y, q.size, 0⟩ } paint
   | .sprites tex quads smooth =>
     if b.texture.any (·.id != tex.id) then b else
+    if b.instanced then
+      let first := b.sprites.size / spriteStride
+      let (sp, b) := b.takeSprites
+      let sp := quads.foldl (init := sp) fun sp s =>
+        if s.src.w <= 0 || s.src.h <= 0 || s.opacity <= 0 then sp else pushInstance sp s smooth
+      let n := sp.size / spriteStride - first
+      pushRun { b with sprites := sp, texture := some tex } ctx.clip ctx.m tex 0 first n
+    else
     let inv := ctx.m.inverse
     let scale := ctx.m.scaleFactor
     quads.foldl (init := { b with texture := some tex }) fun b s =>
@@ -247,6 +300,24 @@ def op {w h : Nat} (ctx : Ctx w h) (b : Batch) (o : RenderOp) : Batch :=
         { kind := kindSprite, inv, scale, a := ⟨p.cx, p.cy, p.hx, p.hy⟩,
           radii := ⟨p.dx, p.dy, p.ku, p.kv⟩ }
         #[p.sx, p.sy, p.sw, p.sh, tex.w.toF, if smooth then 1 else 0, s.opacity, 0, 0, 0, 0, 0]
+  | .layer l =>
+    if b.texture.any (·.id != l.tex.id) then b else
+    if b.instanced then
+      let (b, idx) := match b.layers.findIdx? (·.key == l.key) with
+        | some i => (b, i)
+        | none => ({ b with layers := b.layers.push l }, b.layers.size)
+      pushRun { b with texture := some l.tex } ctx.clip ctx.m l.tex (idx + 1) 0 l.quads.size
+    else
+    let inv := ctx.m.inverse
+    let scale := ctx.m.scaleFactor
+    let tex := l.tex
+    l.quads.foldl (init := { b with texture := some tex }) fun b s =>
+      if s.src.w <= 0 || s.src.h <= 0 || s.opacity <= 0 then b else
+      let p := s.params
+      b.pushSlots (ctx.clipTo ((ctx.m.mapRect s.dst).inflate 1.0))
+        { kind := kindSprite, inv, scale, a := ⟨p.cx, p.cy, p.hx, p.hy⟩,
+          radii := ⟨p.dx, p.dy, p.ku, p.kv⟩ }
+        #[p.sx, p.sy, p.sw, p.sh, tex.w.toF, if l.smooth then 1 else 0, s.opacity, 0, 0, 0, 0, 0]
   | .transform m ops => opArray { ctx with m := ctx.m.compose m } ops 0 b
   | .clip r ops => opArray { ctx with clip := ctx.clipTo (ctx.m.mapRect r) } ops 0 b
   | .group ops => opArray ctx ops 0 b
@@ -314,8 +385,29 @@ def rangesSize (rs : FloatArray) : Nat := Id.run do
   return n
 
 /-- Lower a `w × h` scene. -/
-def build (w h : Nat) (ops : Array RenderOp) : Batch :=
-  ops.foldl (op (w := w) (h := h) { clip := Clip.full w h }) {}
+def build (w h : Nat) (ops : Array RenderOp) (instanced := false) : Batch :=
+  ops.foldl (op (w := w) (h := h) { clip := Clip.full w h }) { instanced }
+
+/-- Size of the world target for a `w`-px-wide screen drawn at scale `k`. -/
+def scaledSize (w h : Nat) (k : Float) : Nat × Nat :=
+  if k >= 1 then (w, h) else
+  (max 1 (w.toF * k).ceil.toUInt64.toNat, max 1 (h.toF * k).ceil.toUInt64.toNat)
+
+/-- Lower a `w × h` frame whose `world` is drawn at scale `k ≤ 1` into a
+smaller target (upscaled by the host) and whose `hud` is drawn at native
+resolution on top. Both use the screen's coordinates. With `k ≥ 1` the frame
+is lowered unsplit. -/
+def buildSplit (w h : Nat) (k : Float) (world hud : Array RenderOp)
+    (instanced := true) : Batch :=
+  if k >= 1 then build w h (world ++ hud) instanced else
+  let (ww, wh) := scaledSize w h k
+  let sx := ww.toF / w.toF
+  let sy := wh.toF / h.toF
+  let b := op (w := ww) (h := wh) { clip := Clip.full ww wh } { instanced }
+    (.transform (Affine.scale sx sy) world)
+  let split := b.count
+  let b := hud.foldl (op (w := w) (h := h) { clip := Clip.full w h }) b
+  { b with split := if split == 0 then 0 else split, worldW := ww, worldH := wh }
 
 end Batch
 
