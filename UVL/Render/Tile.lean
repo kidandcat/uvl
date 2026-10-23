@@ -78,7 +78,7 @@ def bounds (m : Affine) (op : RenderOp) : Option Rect :=
       let r := (m.mapRect s.dst).inflate 2.0
       some (match acc with | some a => Rect.union a r | none => r)
   | .layer l =>
-    l.quads.foldl (init := none) fun acc s =>
+    l.quads.get.foldl (init := none) fun acc s =>
       let r := (m.mapRect s.dst).inflate 2.0
       some (match acc with | some a => Rect.union a r | none => r)
   | .transform m' ops => boundsAll (m.compose m') ops 0 none

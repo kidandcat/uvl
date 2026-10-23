@@ -420,6 +420,7 @@ static void encode(WGPURenderPassEncoder pass, WGPUBindGroup group, const double
         if (k >= 0) {
           if (!layers[k].bg) layers[k].bg = sprite_group(layers[k].buf, layers[k].bytes);
           g = layers[k].bg;
+          n = (uint32_t)(layers[k].bytes / (sizeof(float) * 12)); /* a layer run draws all it uploaded */
         }
       }
       uint32_t x0 = (uint32_t)r[4], y0 = (uint32_t)r[5], x1 = (uint32_t)r[6], y1 = (uint32_t)r[7];

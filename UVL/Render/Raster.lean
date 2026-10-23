@@ -554,7 +554,7 @@ def renderOp (ctx : Ctx w h) (fb : FrameBuffer w h) (op : RenderOp) : FrameBuffe
   | .text pos s scale c => drawText fb ctx pos s scale c
   | .glyphs atlas quads paint => drawGlyphs fb ctx atlas quads paint
   | .sprites tex quads smooth => drawSprites fb ctx tex quads smooth
-  | .layer l => drawSprites fb ctx l.tex l.quads l.smooth
+  | .layer l => drawSprites fb ctx l.tex l.quads.get l.smooth
   | .transform m ops => renderArray { ctx with m := ctx.m.compose m } ops 0 fb
   | .clip r ops => renderArray { ctx with clip := ctx.clipTo (ctx.m.mapRect r) } ops 0 fb
   | .group ops => renderArray ctx ops 0 fb

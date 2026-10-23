@@ -136,7 +136,7 @@ def spriteStride : Nat := 12
     |>.push s.src.x |>.push s.src.y |>.push s.src.w |>.push s.src.h
     |>.push s.opacity |>.push (if smooth then 1 else 0) |>.push 0 |>.push 0
 
-/-- Append a `kindSpriteRun` marker: `count` instances starting at `first`
+/-- Append a `kindSpriteRun` marker: `count` instances starting at `first` (for a layer, any nonzero `count`: the host draws all it uploaded)
 of source `source` (0 = `sprites`, `i + 1` = `layers[i]`), drawn with the
 forward transform `m` and scissored to `clip`. Slots: 4–7 clip, 8–13 forward
 transform `a b c d e f`, 16 source, 17 first, 18 count, 19–20 texture size. -/
@@ -306,12 +306,12 @@ def op {w h : Nat} (ctx : Ctx w h) (b : Batch) (o : RenderOp) : Batch :=
       let (b, idx) := match b.layers.findIdx? (·.key == l.key) with
         | some i => (b, i)
         | none => ({ b with layers := b.layers.push l }, b.layers.size)
-      pushRun { b with texture := some l.tex } ctx.clip ctx.m l.tex (idx + 1) 0 l.quads.size
+      pushRun { b with texture := some l.tex } ctx.clip ctx.m l.tex (idx + 1) 0 1
     else
     let inv := ctx.m.inverse
     let scale := ctx.m.scaleFactor
     let tex := l.tex
-    l.quads.foldl (init := { b with texture := some tex }) fun b s =>
+    l.quads.get.foldl (init := { b with texture := some tex }) fun b s =>
       if s.src.w <= 0 || s.src.h <= 0 || s.opacity <= 0 then b else
       let p := s.params
       b.pushSlots (ctx.clipTo ((ctx.m.mapRect s.dst).inflate 1.0))

@@ -115,7 +115,9 @@ change. The CPU rasterizer draws a layer exactly like `RenderOp.sprites`. -/
 structure SpriteLayer where
   key : Nat
   tex : Texture
-  quads : Array Sprite
+  /-- Built lazily: the GPU host forces it only when the layer is uploaded, so a
+  view can name a big layer every frame for free. -/
+  quads : Thunk (Array Sprite)
   smooth : Bool := false
 deriving Inhabited
 

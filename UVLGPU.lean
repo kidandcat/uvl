@@ -100,7 +100,8 @@ def syncTexture (b : GPU.Batch) : IO Unit := do
 def syncLayers (b : GPU.Batch) : IO Unit := do
   for l in b.layers do
     if !(← layerHas l.key.toFloat) then
-      let inst := l.quads.foldl (init := FloatArray.emptyWithCapacity (l.quads.size * GPU.Batch.spriteStride))
+      let qs := l.quads.get
+      let inst := qs.foldl (init := FloatArray.emptyWithCapacity (qs.size * GPU.Batch.spriteStride))
         fun a s => GPU.Batch.pushInstance a s l.smooth
       layerUpload l.key.toFloat inst
 
