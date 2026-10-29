@@ -2,6 +2,9 @@ import Lake
 open Lake DSL
 
 package uvl where
+  version := v!"0.1.0"
+  license := "MIT"
+  description := "Visualization and UI library written in Lean 4."
   leanOptions := #[⟨`autoImplicit, false⟩, ⟨`relaxedAutoImplicit, false⟩]
   moreLeancArgs := #["-O3"]
 

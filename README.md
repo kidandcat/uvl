@@ -4,6 +4,20 @@ A visualization and UI library written **100% in Lean 4**: no DOM, no GTK/UIKit,
 dependencies. Lean controls everything, from the widget tree down to the last pixel; the host
 platform only has to provide a *framebuffer* and a stream of events.
 
+**Version 0.1.0** ([CHANGELOG.md](CHANGELOG.md)). There is no git tag and no
+GitHub release yet; `0.1.0` names the current `main` line. It is a development
+version: source compatibility is not promised between minor numbers. The
+library is [MIT](LICENSE) licensed
+(`Copyright (c) 2026 Jairo Caro-Accino Viciana`). Fonts and the binaries the build downloads
+have their own terms ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+
+| Host | What you get | Honest limit |
+| --- | --- | --- |
+| Desktop | Library, tests, and the CPU rasterizer on the Lean toolchain. SDL3 windows and the GPU path (wgpu-native) on Linux and macOS. | CI is Ubuntu only. `native/fetch_wgpu.sh` has no Windows prebuilt. |
+| Browser | The same apps as WebAssembly, WebGPU or Canvas 2D | Needs an Emscripten SDK. |
+| Android | `NativeActivity` APK, touch, keyboard; GPU on Vulkan when the app imports `UVLGPU` | GPU has been tried on the emulator only. See [android/README.md](android/README.md). |
+| Bare metal | Tiled RGB565 / 1-bit, no `libleanrt`; QEMU, and firmware that has run on an ESP32 | In progress. See [baremetal/README.md](baremetal/README.md). |
+
 ![dashboard](Tests/golden/dashboard.png)
 
 ## Status
@@ -325,6 +339,11 @@ on the CPU, so CI has no meaningful GPU timings.
 
 ### Performance
 
+A dated snapshot of the sprite example (desktop Metal and the Android
+emulator), including limits that snapshot hit, is in
+[docs/sprite-performance.md](docs/sprite-performance.md). Those figures predate
+instanced sprites.
+
 `lake exe uvl-bench 8` measures CPU time per full frame, one core, 800×600: 36 ms for the
 counter and 70 ms for the dashboard. Frames are only rendered when something changed, and
 then only partially; in the browser the GPU renderer replaces CPU rasterization altogether.
@@ -420,3 +439,9 @@ Tests/        golden images, test PNG decoder, test driver
 2. Close the gap between MSDF and exact outlines at UI sizes (today 7–11% of the ink at
    11–16 px, measured in `Tests/Text.lean`), then make MSDF the default for UI text; until
    then outlines stay the default (exact, and no atlas memory on small devices).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Releases are described in
+[RELEASING.md](RELEASING.md).

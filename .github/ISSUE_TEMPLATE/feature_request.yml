@@ -1,0 +1,26 @@
+name: Feature request
+description: A change to the library, a host, or the docs.
+title: "[feature] "
+labels: []
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you cannot do today, and who it affects.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The behaviour you want. Note if it would change an existing API.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Other approaches you considered.
+    validations:
+      required: false

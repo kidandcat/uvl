@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in UVL builds, renders, or behaves wrong.
+title: "[bug] "
+labels: []
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got. Paste the command and the relevant log.
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host
+      description: Desktop (OS), browser, Android, or bare metal, and the GPU or CPU path if you know it.
+      placeholder: Linux, lake test
+    validations:
+      required: true
+  - type: input
+    id: toolchain
+    attributes:
+      label: Lean toolchain
+      description: Contents of lean-toolchain, or the output of `lean --version`.
+      placeholder: leanprover/lean4:v4.35.0
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: A minimal Lean snippet, a screenshot, or a golden-image mismatch. Leave Unicode test strings unchanged if you quote them.
+    validations:
+      required: false
