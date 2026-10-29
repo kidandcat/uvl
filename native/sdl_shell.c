@@ -172,12 +172,17 @@ LEAN_EXPORT lean_obj_res uvl_sdl_poll(lean_obj_arg world) {
                  e.tfinger.y * wh);
       break;
     }
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+    /* Pinch events were added in SDL 3.4.0. Headers before that (CI pins
+       3.2.24) have neither the enum nor SDL_Event.pinch, and cannot deliver
+       the event, so there is nothing to forward. */
     case SDL_EVENT_PINCH_UPDATE: {
       float mx = 0, my = 0;
       SDL_GetMouseState(&mx, &my);
       arr = push(arr, 16, e.pinch.scale, mx, my);
       break;
     }
+#endif
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       arr = push(arr, 8, e.window.data1, e.window.data2, 0); break;
     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
