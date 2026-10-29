@@ -7,7 +7,8 @@ platform only has to provide a *framebuffer* and a stream of events.
 **Version 0.1.0** ([CHANGELOG.md](CHANGELOG.md)). There is no git tag and no
 GitHub release yet; `0.1.0` names the current `main` line. It is a development
 version: source compatibility is not promised between minor numbers. The
-library is [MIT](LICENSE) licensed. Fonts and the binaries the build downloads
+library is [MIT](LICENSE) licensed
+(`Copyright (c) 2026 Jairo Caro-Accino Viciana`). Fonts and the binaries the build downloads
 have their own terms ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 | Host | What you get | Honest limit |

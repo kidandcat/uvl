@@ -1,8 +1,13 @@
 # Third-party notices
 
-UVL itself is under the MIT license in [LICENSE](LICENSE) (copyright line
-matches [kidandcat/cairn](https://github.com/kidandcat/cairn/blob/main/LICENSE)
-and [kidandcat/vos](https://github.com/kidandcat/vos/blob/main/LICENSE)).
+UVL itself is under the MIT license in [LICENSE](LICENSE):
+
+```
+Copyright (c) 2026 Jairo Caro-Accino Viciana
+```
+
+That line matches [kidandcat/cairn](https://github.com/kidandcat/cairn/blob/main/LICENSE)
+and [kidandcat/vlab](https://github.com/kidandcat/vlab/blob/main/LICENSE).
 This file lists code and assets that are not under that license, or that are
 fetched when you build and are not stored in this repository.
 
