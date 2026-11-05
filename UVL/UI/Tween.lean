@@ -21,6 +21,10 @@ def app : App Model Msg where
 
 `to` starts from the value currently shown, so retargeting a running tween
 (a slider dragged quickly) stays continuous.
+
+This `Float` stepper is the convenient API. It is tested, not proved: adding
+`dt` in `Float` can drift. The proved clock is `UVL.Anim`, where the value is
+a function of a rational elapsed time. See [docs/animation.md](../../docs/animation.md).
 -/
 
 namespace UVL

@@ -1,6 +1,7 @@
 import Examples.Scenes
 import Examples.Counter
 import Examples.Sprites
+import Examples.Anim
 import Tests.PngDecode
 import Tests.Tile
 import Tests.Damage
@@ -9,6 +10,7 @@ import Tests.Text
 import Tests.Controls
 import Tests.Html
 import Tests.Camera
+import Tests.Anim
 
 /-!
 Test driver (`lake test`).
@@ -59,7 +61,8 @@ def goldens : List Golden := [
   ⟨"msdf", 560, 260, fun _ => Image.toPNG (Raster.render 560 260 Examples.msdfText)⟩,
   ⟨"sprites", 240, 160, fun _ => Image.toPNG (Raster.render 240 160 Examples.spriteScene)⟩,
   ⟨"controls", 960, 360, fun _ => Tests.Controls.session.framePNG⟩,
-  ⟨"map", 400, 240, fun _ => mapSession.framePNG⟩
+  ⟨"map", 400, 240, fun _ => mapSession.framePNG⟩,
+  ⟨"anim", 480, 320, fun _ => Image.toPNG (Examples.Anim.renderAt (Examples.Anim.atMs 800))⟩
 ]
 
 /-- Max channel difference allowed, and fraction of bytes allowed to differ. -/
@@ -174,6 +177,8 @@ def main (args : List String) : IO UInt32 := do
   ok := (← Tests.Text.run) && ok
   IO.println "camera and gestures:"
   ok := (← Tests.Camera.run) && ok
+  IO.println "verified animation:"
+  ok := (← Tests.Anim.run) && ok
   IO.println "GPU pipeline (interpreted):"
   ok := (← Tests.GPU.run) && ok
   IO.println (if ok then "ALL TESTS PASSED" else "SOME TESTS FAILED")
