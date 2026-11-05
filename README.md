@@ -31,7 +31,7 @@ have their own terms ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 | 5. GPU rendering | Typed shader DSL in Lean that emits WGSL, render ops lowered to GPU primitives, SDFs/paths/text evaluated in the fragment shader, one pipeline per primitive kind; browser (WebGPU) and desktop (wgpu-native); output matches the CPU rasterizer | ✅ |
 | 6. Fonts | TrueType parser in Lean, embedded UVL Sans, kerning and wrapping, `label`/`paragraph`; MSDF atlas generated in Lean, persistent on the GPU, identical sampling on CPU and GPU | ✅ |
 | 7. Controls | Pointer capture, keyboard focus, wheel routing; slider, checkbox, text field, scroll view; incremental GPU uploads | ✅ |
-| 8. Animation and editing | Runtime clock, blinking caret, hover fade-in, `Tween` with easing curves; text selection (drag, double-click, Shift, Ctrl+A), word navigation, the system clipboard on web and desktop; multi-line `textArea` | ✅ |
+| 8. Animation and editing | Runtime clock, blinking caret, hover fade-in, `Tween` with easing curves; proved `Anim` clock (endpoint, sync, cancel, frame independence) in [docs/animation.md](docs/animation.md); text selection, word navigation, the system clipboard; multi-line `textArea` | ✅ |
 | Android | The same apps as a `NativeActivity` APK with no Java code: Lean runtime and `Init` cross-compiled with the NDK, touch, on-screen keyboard, density scaling and insets, multi-touch; tested on an emulator in CI; GPU rendering through wgpu-native on Vulkan for apps that import `UVLGPU`; see [`android/`](android/README.md) | ✅ (GPU tried on the emulator only) |
 | Bare metal | Tiled rendering (RGB565 / 1-bit, identical to the full frame), C runtime without `libleanrt` tested on ARM Cortex-M3 (QEMU) and running on an ESP32 LilyGO T-Display; see [`baremetal/`](baremetal/README.md) | in progress |
 
@@ -174,6 +174,33 @@ def app : App Model Msg where
 ```
 
 ![counter](Tests/golden/counter.png)
+
+### Verified animation
+
+`UVL.Anim` is a clock, not a stepper. A clip is `start`, `target`, `duration` and an easing;
+the value at elapsed time `t` is
+
+```text
+start + (target - start) * ease(clamp(t / duration))
+```
+
+with `t` and the value in `Rat`, so the endpoint is an equality. At `t ≤ 0` the value is
+`start` (when the duration is positive). At `t ≥ duration` it is `target`, including when one
+frame jumps past the end, after `retarget`, and after `reverse`. Parallel clips with one
+duration finish together. A sequence lasts the sum of its durations; a stagger of equal clips
+lasts `(n - 1) * delay + duration`. Cancelling either snaps to the target or holds the current
+sample, and for the monotone easings that sample stays inside the start–target interval.
+`outBack` is proved to hit the endpoints and proved to leave `[0, 1]`.
+
+The runtime's `tick` is still a `Float`. `millisOfFloat` rounds it to a millisecond; from there
+the clock is an integer and the sample depends only on the sum. Layout places the widget at
+`toPixel`, and `toPixel` of an integer rational is that integer, so a finished move whose target
+is a whole pixel is on that pixel. The `Float` stored in a `Rect` is not part of the proof.
+The older `Tween` in `UVL.UI.Tween` is the float stepper used by the controls example; it is
+tested, not proved. Theorems, and the line between proved and tested, are in
+[docs/animation.md](docs/animation.md).
+
+![animation](Tests/golden/anim.png)
 
 * **Desktop:** `UVL.SDL.run app` opens a window with SDL3 and draws it **on the GPU** with
   the same renderer and WGSL as the browser, through wgpu-native's `webgpu.h` (Vulkan, Metal or

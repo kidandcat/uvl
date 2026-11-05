@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `UVL.Anim`: animations as a function of rational time, with proofs of the
+  endpoint (including retarget and reverse), shared-clock sync, parallel /
+  sequence / stagger duration, cancel (snap or hold) staying inside the
+  start–target interval for monotone easings, and frame independence.
+  `toPixel` of an integer target is that integer. See
+  [docs/animation.md](docs/animation.md). The float `Tween` is unchanged.
+
 ## [0.1.0] - 2026-10-29
 
 First version number. Everything below landed on `main` between 2026-10-14

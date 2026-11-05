@@ -21,13 +21,14 @@ lean_lib UVL where
   precompileModules := true
 
 lean_lib Tests where
-  globs := #[.one `Tests.PngDecode, .one `Tests.Tile, .one `Tests.Damage, .one `Tests.GPU, .one `Tests.Text, .one `Tests.Controls, .one `Tests.Html, .one `Tests.Camera]
+  globs := #[.one `Tests.PngDecode, .one `Tests.Tile, .one `Tests.Damage, .one `Tests.GPU, .one `Tests.Text, .one `Tests.Controls, .one `Tests.Html, .one `Tests.Camera, .one `Tests.Anim]
 
 lean_lib Examples where
   globs := #[.one `Examples.Scenes, .one `Examples.Counter, .one `Examples.BareMetalCounter,
     .one `Examples.Clock, .one `Examples.BareMetalClock,
     .one `Examples.CounterWeb, .one `Examples.DashboardWeb, .one `Examples.TextWeb, .one `Examples.Controls, .one `Examples.ControlsWeb,
-    .one `Examples.Phone, .one `Examples.PhoneAndroid, .one `Examples.Sprites, .one `Examples.SpritesAndroid]
+    .one `Examples.Phone, .one `Examples.PhoneAndroid, .one `Examples.Sprites, .one `Examples.SpritesAndroid,
+    .one `Examples.Anim]
 
 lean_exe «uvl-demo» where
   root := `Examples.Demo
