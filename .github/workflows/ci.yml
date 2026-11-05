@@ -96,7 +96,9 @@ jobs:
           path: counter-window.png
 
   web:
-    runs-on: ubuntu-latest
+    # Playwright 1.56 has no Chromium build for ubuntu26.04, which is what
+    # ubuntu-latest is. 1.61 added that label; pin the image until then.
+    runs-on: ubuntu-24.04
     env:
       EMSDK_VERSION: 6.0.12
     steps:
